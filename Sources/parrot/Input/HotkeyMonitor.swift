@@ -97,10 +97,18 @@ final class HotkeyMonitor {
             throw HotkeyError.tapCreateFailed
         }
 
-        let mask: CGEventMask =
-            (1 << CGEventType.flagsChanged.rawValue)
-            | (1 << CGEventType.keyDown.rawValue)
-            | (1 << CGEventType.keyUp.rawValue)
+        // Only flagsChanged drives the hotkey. keyDown/keyUp are subscribed here
+        // *only* under --debug-hotkey: listening to every keystroke system-wide
+        // costs main-thread work, raises the odds macOS disables the tap for
+        // timeout, and needlessly exposes typed content (including password
+        // fields) to an Accessibility-privileged process. Chord-cancel gets its
+        // keyDown from the hold-scoped tap instead.
+        var mask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue)
+        if debug {
+            mask |=
+                (1 << CGEventType.keyDown.rawValue)
+                | (1 << CGEventType.keyUp.rawValue)
+        }
         guard let tap = makeTap(mask: mask) else { throw HotkeyError.tapCreateFailed }
 
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
@@ -160,6 +168,17 @@ final class HotkeyMonitor {
         }
         chordTap = nil
         chordSource = nil
+    }
+
+    /// Called from the tap callback when macOS disables our tap. Without this
+    /// the process keeps running, the menu bar icon stays put, and the hotkey
+    /// silently does nothing until the user restarts parrot.
+    fileprivate func reEnable() {
+        guard let tap else { return }
+        CGEvent.tapEnable(tap: tap, enable: true)
+        FileHandle.standardError.write(Data(
+            "event tap was disabled by the system — re-enabled\n".utf8
+        ))
     }
 
     fileprivate func handle(type: CGEventType, event: CGEvent) {
@@ -227,8 +246,8 @@ private func hotkeyCallback(
     let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
 
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-        // System disabled our tap; we'll need to re-enable. For now just no-op
-        // and let the user restart parrot.
+        // The tap must be re-enabled from the run loop that owns it.
+        DispatchQueue.main.async { monitor.reEnable() }
         return Unmanaged.passUnretained(event)
     }
 
