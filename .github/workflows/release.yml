@@ -3,32 +3,28 @@ name: release
 on:
   push:
     tags:
-      - "v*"
-  workflow_dispatch:
+      - "v*-milton.*"
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
-  build:
-    name: build arm64 macOS binary
+  release:
+    name: build, attest and publish arm64 macOS binary
     runs-on: macos-15
+    environment: release
     timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: swift version
         run: swift --version
-
-      - name: cache SwiftPM
-        uses: actions/cache@v4
-        with:
-          path: |
-            .build
-            ~/Library/Caches/org.swift.swiftpm
-          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
-          restore-keys: spm-${{ runner.os }}-
 
       - name: build
         run: swift build -c release --arch arm64
@@ -50,12 +46,75 @@ jobs:
           shasum -a 256 parrot-macos-arm64.tar.gz > parrot-macos-arm64.tar.gz.sha256
           ls -lh
 
-      - name: release
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          files: |
-            dist/parrot-macos-arm64.tar.gz
-            dist/parrot-macos-arm64.tar.gz.sha256
-          generate_release_notes: true
-          fail_on_unmatched_files: true
+          subject-path: dist/parrot-macos-arm64.tar.gz
+
+      - name: verify the attestation we just minted
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          have=$(gh --version | head -1 | awk '{print $3}')
+          need=2.49.0
+          if [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -1)" != "$need" ]; then
+            echo "gh $have is older than $need, which lacks a usable 'gh attestation verify'" >&2
+            exit 1
+          fi
+          gh attestation verify parrot-macos-arm64.tar.gz \
+            --repo Milton-Group/parrot \
+            --signer-workflow Milton-Group/parrot/.github/workflows/release.yml \
+            --source-ref "refs/tags/${GITHUB_REF_NAME}"
+
+      - name: download the attestation bundle for vendoring
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh attestation download parrot-macos-arm64.tar.gz --repo Milton-Group/parrot
+          digest=$(shasum -a 256 parrot-macos-arm64.tar.gz | awk '{print $1}')
+          mv "sha256:${digest}.jsonl" parrot-macos-arm64.tar.gz.sigstore.json
+          ls -lh
+
+      - name: release notes
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          digest=$(shasum -a 256 parrot-macos-arm64.tar.gz | awk '{print $1}')
+          cat > notes.md <<EOF
+          Milton fork build of parrot, arm64 macOS, built and attested by
+          \`.github/workflows/release.yml\` from tag \`${GITHUB_REF_NAME}\`
+          (commit \`${GITHUB_SHA}\`).
+
+          \`parrot-macos-arm64.tar.gz\` sha256: \`${digest}\`
+
+          Verify before pinning:
+
+          \`\`\`
+          gh attestation verify parrot-macos-arm64.tar.gz \\
+            --bundle parrot-macos-arm64.tar.gz.sigstore.json \\
+            --repo Milton-Group/parrot \\
+            --signer-workflow Milton-Group/parrot/.github/workflows/release.yml \\
+            --source-ref refs/tags/${GITHUB_REF_NAME}
+          \`\`\`
+
+          Unsigned binary: the per-user TCC grants and the digest pin in
+          Milton-Group/infra are the trust story. See MILTON.md.
+          EOF
+          cat notes.md
+
+      - name: publish release
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            parrot-macos-arm64.tar.gz \
+            parrot-macos-arm64.tar.gz.sha256 \
+            parrot-macos-arm64.tar.gz.sigstore.json \
+            --verify-tag \
+            --notes-file notes.md
