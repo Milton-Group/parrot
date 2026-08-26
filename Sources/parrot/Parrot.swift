@@ -153,7 +153,7 @@ struct Run: ParsableCommand {
                             let text = try await transcriber.transcribe(samples)
                             let elapsed = Date().timeIntervalSince(started)
                             FileHandle.standardError.write(Data(
-                                String(format: "→ %.2fs · %@\n", elapsed, text).utf8
+                                String(format: "→ %.2fs · %d chars\n", elapsed, text.count).utf8
                             ))
                             await MainActor.run {
                                 TextInjector.inject(text)

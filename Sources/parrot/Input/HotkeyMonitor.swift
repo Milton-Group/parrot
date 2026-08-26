@@ -205,15 +205,7 @@ final class HotkeyMonitor {
     }
 
     fileprivate func handle(type: CGEventType, event: CGEvent) {
-        if debug {
-            let flags = event.flags
-            let keycode = event.getIntegerValueField(.keyboardEventKeycode)
-            FileHandle.standardError.write(
-                Data(
-                    "  [debug] type=\(type.rawValue) keycode=\(keycode) flags=\(String(flags.rawValue, radix: 16))\n"
-                        .utf8
-                ))
-        }
+        if debug { debugLog(type: type, event: event) }
 
         switch type {
         case .flagsChanged:
@@ -222,6 +214,24 @@ final class HotkeyMonitor {
             cancelHold()
         default:
             break
+        }
+    }
+
+    /// Keycodes and modifier flags are only meaningful for keyboard events, and
+    /// a mouse event's payload is its cursor position — never logged, not even
+    /// under --debug-hotkey.
+    private func debugLog(type: CGEventType, event: CGEvent) {
+        switch type {
+        case .flagsChanged, .keyDown, .keyUp:
+            let flags = event.flags
+            let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+            FileHandle.standardError.write(
+                Data(
+                    "  [debug] type=\(type.rawValue) keycode=\(keycode) flags=\(String(flags.rawValue, radix: 16))\n"
+                        .utf8
+                ))
+        default:
+            FileHandle.standardError.write(Data("  [debug] type=\(type.rawValue)\n".utf8))
         }
     }
 
