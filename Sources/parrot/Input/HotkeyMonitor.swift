@@ -70,6 +70,7 @@ final class HotkeyMonitor {
         case chord
         case short
         case noChordTap = "no-chord-tap"
+        case tapDisabled = "tap-disabled"
     }
     enum Event { case pressed, released, cancelled(CancelReason) }
     enum HotkeyError: Error { case tapCreateFailed }
@@ -115,6 +116,7 @@ final class HotkeyMonitor {
     private var activeIndex: Int?
     private var pressedTimestamp: CGEventTimestamp?
     private var reEnables: [Date] = []
+    private var alertedThisWindow = false
     /// Last flags word seen, so a press is a rising edge rather than "the flag
     /// is still set" — otherwise a cancelled hold re-arms on the next unrelated
     /// modifier event while the key is still held down.
@@ -224,26 +226,42 @@ final class HotkeyMonitor {
     /// silently does nothing until the user restarts parrot. The callback
     /// cannot say which of our taps was disabled, so both are re-enabled.
     fileprivate func reEnable(reason: String) {
+        // A hold cannot survive its tap being disabled: the release edge would
+        // never arrive, so the microphone would stay open and the hotkey would
+        // be dead until the process restarted. End it, discarding the audio.
+        cancelHold(.tapDisabled)
+
         var reEnabled = false
         if let tap {
-            CGEvent.tapEnable(tap: tap, enable: true)
             reEnabled = true
+            CGEvent.tapEnable(tap: tap, enable: true)
+            if !CGEvent.tapIsEnabled(tap: tap) {
+                FileHandle.standardError.write(Data("tap: re-enable FAILED (\(reason))\n".utf8))
+            }
         }
         if let chordTap {
-            CGEvent.tapEnable(tap: chordTap, enable: true)
             reEnabled = true
+            CGEvent.tapEnable(tap: chordTap, enable: true)
+            if !CGEvent.tapIsEnabled(tap: chordTap) {
+                FileHandle.standardError.write(Data("tap: re-enable FAILED (chord, \(reason))\n".utf8))
+            }
         }
         guard reEnabled else { return }
 
         let now = Date()
         reEnables.removeAll { now.timeIntervalSince($0) > HotkeyMonitor.reEnableWindow }
+        if reEnables.count <= HotkeyMonitor.reEnableAlertCount { alertedThisWindow = false }
         reEnables.append(now)
         FileHandle.standardError.write(Data("tap: re-enabled (\(reason))\n".utf8))
-        if reEnables.count >= HotkeyMonitor.reEnableAlertCount {
+        // Say it once per window, not once per event, and keep re-enabling
+        // either way: the LaunchAgent restarts the process, so exiting here
+        // would only trade a noisy log for a restart loop.
+        if reEnables.count > HotkeyMonitor.reEnableAlertCount, !alertedThisWindow {
+            alertedThisWindow = true
             let minutes = Int(HotkeyMonitor.reEnableWindow / 60)
-            FileHandle.standardError.write(Data(
-                "tap: re-enabled \(reEnables.count) times in the last \(minutes) minutes\n".utf8
-            ))
+            let line = "tap: re-enabled \(reEnables.count) times in the last \(minutes) minutes — "
+                + "the hotkey may be missing events\n"
+            FileHandle.standardError.write(Data(line.utf8))
         }
     }
 
