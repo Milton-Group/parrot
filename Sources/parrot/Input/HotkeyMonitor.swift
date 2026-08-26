@@ -314,20 +314,16 @@ final class HotkeyMonitor {
         return deltas.allSatisfy { event.getIntegerValueField($0) == 0 }
     }
 
-    /// Only flagsChanged gets a keycode: it identifies a modifier key, which is
-    /// the thing being debugged. A keyDown's keycode is what the user is typing
-    /// — passwords included — and a mouse event's payload is the cursor
-    /// position, so those log the event type and nothing else.
+    /// No keycode is logged, for any event. A keyDown's keycode is what the user
+    /// is typing — passwords included — and a mouse event's payload is the
+    /// cursor position. The flags word says which modifier a flagsChanged was
+    /// about, which is all this needs to say; the log goes to a file the user
+    /// may well hand to someone else.
     private func debugLog(type: CGEventType, event: CGEvent) {
         switch type {
         case .flagsChanged:
-            let flags = event.flags
-            let keycode = event.getIntegerValueField(.keyboardEventKeycode)
-            FileHandle.standardError.write(
-                Data(
-                    "  [debug] flagsChanged keycode=\(keycode) flags=\(String(flags.rawValue, radix: 16))\n"
-                        .utf8
-                ))
+            let flags = String(event.flags.rawValue, radix: 16)
+            FileHandle.standardError.write(Data("  [debug] flagsChanged flags=\(flags)\n".utf8))
         default:
             FileHandle.standardError.write(Data("  [debug] type=\(type.rawValue)\n".utf8))
         }
