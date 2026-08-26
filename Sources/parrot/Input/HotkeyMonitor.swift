@@ -284,6 +284,11 @@ final class HotkeyMonitor {
             guard event.getIntegerValueField(.scrollWheelEventMomentumPhase) == 0 else { return }
             cancelHold()
         case .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            // Injected text arrives here as ordinary keystrokes; cancelling on
+            // parrot's own output would kill the hold after every dictation.
+            guard event.getIntegerValueField(.eventSourceUserData)
+                != ParrotEventTag.injected
+            else { return }
             cancelHold()
         default:
             break
@@ -365,6 +370,9 @@ final class HotkeyMonitor {
     private func nonModifierKeyIsDown() -> Bool {
         for key in CGKeyCode(0)...HotkeyMonitor.highestKeycode {
             if HotkeyMonitor.modifierKeycodes.contains(key) { continue }
+            // The injector posts its text as keycode 0. While a post is in
+            // flight that key reads as down, which would fail every hold closed.
+            if key == 0, TextInjector.isInjecting { continue }
             if CGEventSource.keyState(.combinedSessionState, key: key) { return true }
         }
         return false

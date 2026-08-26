@@ -1,11 +1,29 @@
 import CoreGraphics
 import Foundation
 
+/// Stamped into `eventSourceUserData` on every event parrot posts, so parrot's
+/// own event taps can tell an injected keystroke from one the user typed.
+enum ParrotEventTag {
+    static let injected: Int64 = 0x5041_5252_4F54
+}
+
 /// Posts a string of text at the current cursor location by synthesizing
 /// keyboard events with `CGEventKeyboardSetUnicodeString`. Works in nearly
 /// every text field on macOS; some Electron apps and secure password fields
 /// can drop characters (platform constraint).
 enum TextInjector {
+    /// Injected events carry the tag, and a private state so the synthetic key
+    /// presses do not merge into the keyboard state the rest of the system sees.
+    private static let source: CGEventSource? = {
+        let source = CGEventSource(stateID: .privateState)
+        source?.userData = ParrotEventTag.injected
+        return source
+    }()
+
+    /// True while `inject` is posting. Read on the main thread only, which is
+    /// also the only thread that writes it.
+    private(set) static var isInjecting = false
+
     /// Inject the given text at the current cursor location.
     /// Splits long strings into chunks because the underlying API has a
     /// per-event character limit (~20 chars).
@@ -17,6 +35,8 @@ enum TextInjector {
         let chunkSize = 20
         var index = 0
 
+        isInjecting = true
+        defer { isInjecting = false }
         while index < utf16.count {
             let end = min(index + chunkSize, utf16.count)
             var chunk = Array(utf16[index..<end])
@@ -46,11 +66,11 @@ enum TextInjector {
         let length = chunk.count
         guard length > 0 else { return }
 
-        let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)
+        let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true)
         down?.keyboardSetUnicodeString(stringLength: length, unicodeString: &chunk)
         down?.post(tap: .cgSessionEventTap)
 
-        let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)
+        let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
         up?.keyboardSetUnicodeString(stringLength: length, unicodeString: &chunk)
         up?.post(tap: .cgSessionEventTap)
     }
