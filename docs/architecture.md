@@ -75,7 +75,7 @@ Subcommands:
 
 ### `HotkeyMonitor`
 
-Global hotkey via `CGEventTap` (requires Accessibility permission). Default: **hold Fn**. Detected via `flagsChanged` events with `NSEvent.ModifierFlags.function` / `kCGEventFlagMaskSecondaryFn`. Emits `.pressed` / `.released`. Configurable via `--hotkey` flag or config file.
+Global hotkey via `CGEventTap` (requires Accessibility permission). Default: **hold Fn or right Option**, whichever goes down first, until that same key comes back up. Detected via `flagsChanged` events — `kCGEventFlagMaskSecondaryFn` for Fn, and for right Option the device-specific `NX_DEVICERALTKEYMASK` bit, which is what tells it apart from the left Option key sharing its flag. Emits `.pressed` / `.released` / `.cancelled`. Configurable via the `--hotkey` flag, which takes a comma-separated list of `fn` and `right-option`.
 
 **Fn key caveat:** macOS by default maps the Fn (🌐) key to "Show Emoji & Symbols" or "Start Dictation" depending on the user's setting in System Settings → Keyboard → Press 🌐 key to. The CGEventTap sees the keypress regardless, but the system action also fires. `parrot doctor` will detect this setting and instruct the user to change it to "Do Nothing" so Fn becomes a clean modifier.
 

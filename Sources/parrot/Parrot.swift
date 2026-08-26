@@ -7,7 +7,7 @@ import WhisperKit
 struct Parrot: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "parrot",
-        abstract: "Minimal macOS dictation daemon. Hold Fn, speak, release.",
+        abstract: "Minimal macOS dictation daemon. Hold the push-to-talk key, speak, release.",
         subcommands: [Run.self, Setup.self, Doctor.self, Models.self, Install.self],
         defaultSubcommand: Run.self
     )
@@ -33,6 +33,12 @@ struct Run: ParsableCommand {
 
     @Option(name: .long, help: "Model id to use. Defaults to the recommended model.")
     var model: String?
+
+    @Option(
+        name: .long,
+        help: "Push-to-talk keys, comma separated: fn, right-option. Defaults to fn,right-option."
+    )
+    var hotkey: String?
 
     func run() throws {
         if !skipDoctor {
@@ -61,6 +67,15 @@ struct Run: ParsableCommand {
             chosenModel = m
         }
 
+        // Checked before the model loads, not after: an ungranted daemon that
+        // warms up first pays a multi-second model load on every relaunch before
+        // discovering it cannot register a tap.
+        do {
+            try HotkeyMonitor.requireAccessibility()
+        } catch HotkeyMonitor.HotkeyError.accessibilityNotGranted {
+            exitAwaitingAccessibilityGrant()
+        }
+
         let transcriber = WhisperKitTranscriber(model: chosenModel)
         let warmupSemaphore = DispatchSemaphore(value: 0)
         var warmupError: Error?
@@ -81,7 +96,8 @@ struct Run: ParsableCommand {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
 
-        let monitor = HotkeyMonitor(debug: debugHotkey)
+        let specs = hotkey.map(HotkeySpec.parse) ?? HotkeySpec.defaults
+        let monitor = HotkeyMonitor(specs: specs, debug: debugHotkey)
         let capture = AudioCapture()
         let dumpWav = self.dumpWav
         let overlay: RecordingOverlay? = noOverlay ? nil : MainActor.assumeIsolated { RecordingOverlay() }
@@ -104,6 +120,15 @@ struct Run: ParsableCommand {
                     } catch {
                         FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
                     }
+                case .cancelled(let reason):
+                    // stop() releases the input device and drops the buffer, so a
+                    // cancelled hold never reaches the transcriber.
+                    _ = capture.stop()
+                    MainActor.assumeIsolated {
+                        overlay?.hide()
+                        menuBar.setRecording(false)
+                    }
+                    FileHandle.standardError.write(Data("cancelled: \(reason.rawValue)\n".utf8))
                 case .released:
                     let samples = capture.stop()
                     MainActor.assumeIsolated {
@@ -137,7 +162,7 @@ struct Run: ParsableCommand {
                             let text = try await transcriber.transcribe(samples)
                             let elapsed = Date().timeIntervalSince(started)
                             FileHandle.standardError.write(Data(
-                                String(format: "→ %.2fs · %@\n", elapsed, text).utf8
+                                String(format: "→ %.2fs · %d chars\n", elapsed, text.count).utf8
                             ))
                             await MainActor.run {
                                 TextInjector.inject(text)
@@ -154,6 +179,8 @@ struct Run: ParsableCommand {
                     }
                 }
             }
+        } catch HotkeyMonitor.HotkeyError.accessibilityNotGranted {
+            exitAwaitingAccessibilityGrant()
         } catch {
             FileHandle.standardError.write(Data("failed to register hotkey tap: \(error)\n".utf8))
             FileHandle.standardError.write(Data("run `parrot setup` to configure permissions.\n".utf8))
@@ -169,14 +196,24 @@ struct Run: ParsableCommand {
         sigint.resume()
         signal(SIGINT, SIG_IGN)
 
-        FileHandle.standardError.write(Data("listening on fn hold · model: \(chosenModel.id) · ^C to quit\n".utf8))
+        FileHandle.standardError.write(Data(
+            "listening on \(monitor.activeNames) hold · model: \(chosenModel.id) · ^C to quit\n".utf8
+        ))
         app.run()
     }
 }
 
+/// The caller has already printed the "grant access, then relaunch" line. Exit
+/// 0 is deliberate: the LaunchAgent's `KeepAlive { SuccessfulExit: false }` stops
+/// relaunching on a clean exit, where a non-zero one would restart the daemon
+/// every 10 seconds and reload the model each time.
+private func exitAwaitingAccessibilityGrant() -> Never {
+    exit(0)
+}
+
 struct Doctor: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Check microphone, accessibility, and Fn key configuration."
+        abstract: "Check microphone, accessibility, and hotkey configuration."
     )
 
     func run() throws {

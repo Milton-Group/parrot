@@ -8,6 +8,40 @@ The import carries three upstream commits past `v0.0.5` — two documentation/li
 and one four-line change to `Sources/parrot/UI/MenuBarController.swift`. Those are part of the
 unreviewed base, not a reviewed delta.
 
+## Behaviour
+
+A hold is cancelled by any keystroke, click or scroll, so a hotkey chord reaches the
+application instead of dictating; modifier-only presses (Shift, Command, Control, the other
+Option key) deliberately do not cancel, because holding one to capitalise or to reach a
+punctuation mark is part of speaking a sentence, not an attempt to use the hotkey as a chord.
+
+The default hotkeys are `fn,right-option`, which suits a US layout. On an AltGr layout —
+German, Swiss, French, the Nordic layouts — right Option is the key that types `@ [ ] { } | \ ~`,
+so on those keyboards every one of those characters would start and stop the audio engine and
+flash the overlay. The fix on those keyboards is `--hotkey fn`. A hand-run daemon takes it on the
+command line; on the fleet, the Milton bootstrap writes `--hotkey <value>` into the LaunchAgent's
+`ProgramArguments` from its own `PARROT_HOTKEY` constant, which `MILTON_PARROT_HOTKEY` overrides at
+bootstrap time. The binary reads no environment variable of its own, so setting one in the running
+daemon's environment changes nothing.
+
+Injected text is trimmed of leading and trailing whitespace. Two dictations in a row therefore run
+together unless the first ends in punctuation, which is where the sentence spacing comes from.
+Unicode tag characters are dropped, so a subdivision flag — the Scottish, Welsh and English ones —
+arrives as the plain black flag it is built from.
+
+When the Accessibility grant is missing the daemon opens the system prompt and exits 0, and
+launchd deliberately does not relaunch it (a non-zero exit would relaunch every ten seconds and
+reload the model each time). After granting access, bring it back by hand:
+`launchctl kickstart -k gui/$(id -u)/com.digimata.parrot`, or re-run the Mac setup; nothing
+happens on its own until the next login.
+
+**Accepted risk.** A key pressed and released entirely inside the interval between the hotkey going
+down and the hold starting is seen by neither the chord tap, which is not listening yet, nor the
+key-state scan, which reads a key that is already back up: that hold records instead of cancelling.
+Closing it needs an always-on observer of every keystroke, which this fork deliberately does not
+run — that is an Accessibility-privileged process reading everything typed, password fields
+included, to catch a window a few milliseconds wide.
+
 ## Release
 
 Tag `v0.0.5-milton.N` on `main` triggers `.github/workflows/release.yml`. The release control
