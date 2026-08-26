@@ -7,7 +7,7 @@ import WhisperKit
 struct Parrot: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "parrot",
-        abstract: "Minimal macOS dictation daemon. Hold Fn, speak, release.",
+        abstract: "Minimal macOS dictation daemon. Hold the push-to-talk key, speak, release.",
         subcommands: [Run.self, Setup.self, Doctor.self, Models.self, Install.self],
         defaultSubcommand: Run.self
     )
@@ -34,8 +34,11 @@ struct Run: ParsableCommand {
     @Option(name: .long, help: "Model id to use. Defaults to the recommended model.")
     var model: String?
 
-    @Option(name: .long, help: "Push-to-talk key: fn (default) or right-option.")
-    var hotkey: String = "fn"
+    @Option(
+        name: .long,
+        help: "Push-to-talk keys, comma separated: fn, right-option. Defaults to fn,right-option."
+    )
+    var hotkey: String?
 
     func run() throws {
         if !skipDoctor {
@@ -84,16 +87,8 @@ struct Run: ParsableCommand {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
 
-        let monitor: HotkeyMonitor
-        switch hotkey {
-        case "fn":
-            monitor = HotkeyMonitor(debug: debugHotkey)
-        case "right-option":
-            monitor = HotkeyMonitor(mask: .maskAlternate, keycode: 61, debug: debugHotkey)
-        default:
-            FileHandle.standardError.write(Data("unknown hotkey: \(hotkey) (use fn or right-option)\n".utf8))
-            throw ExitCode(1)
-        }
+        let specs = hotkey.map(HotkeySpec.parse) ?? HotkeySpec.defaults
+        let monitor = HotkeyMonitor(specs: specs, debug: debugHotkey)
         let capture = AudioCapture()
         let dumpWav = self.dumpWav
         let overlay: RecordingOverlay? = noOverlay ? nil : MainActor.assumeIsolated { RecordingOverlay() }
@@ -181,7 +176,9 @@ struct Run: ParsableCommand {
         sigint.resume()
         signal(SIGINT, SIG_IGN)
 
-        FileHandle.standardError.write(Data("listening on \(hotkey) hold · model: \(chosenModel.id) · ^C to quit\n".utf8))
+        FileHandle.standardError.write(Data(
+            "listening on \(monitor.activeNames) hold · model: \(chosenModel.id) · ^C to quit\n".utf8
+        ))
         app.run()
     }
 }

@@ -3,29 +3,73 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 
-/// Watches a single modifier key (default: Fn) and emits press/release edges.
+/// One push-to-talk key: the modifier flag it raises and, where the left and
+/// right variants of a modifier share a flag, the keycode that tells them apart.
+struct HotkeySpec {
+    let name: String
+    let mask: CGEventFlags
+    let keycode: Int64?
+
+    static let fn = HotkeySpec(name: "fn", mask: .maskSecondaryFn, keycode: nil)
+    static let rightOption = HotkeySpec(name: "right-option", mask: .maskAlternate, keycode: 61)
+
+    static let defaults: [HotkeySpec] = [fn, rightOption]
+    static let defaultNames = "fn,right-option"
+
+    /// Parses a comma-separated list, matching names case-insensitively after
+    /// trimming. An unknown name warns and falls back to the compiled default
+    /// rather than exiting: a typo in the fleet's launch arguments must not
+    /// leave every re-running Mac with a daemon that refuses to start.
+    static func parse(_ raw: String) -> [HotkeySpec] {
+        var specs: [HotkeySpec] = []
+        var unknown: [String] = []
+
+        for token in raw.split(separator: ",", omittingEmptySubsequences: false) {
+            let name = token.trimmingCharacters(in: .whitespaces).lowercased()
+            switch name {
+            case fn.name:
+                if !specs.contains(where: { $0.name == fn.name }) { specs.append(fn) }
+            case rightOption.name:
+                if !specs.contains(where: { $0.name == rightOption.name }) { specs.append(rightOption) }
+            default:
+                unknown.append(name)
+            }
+        }
+
+        guard unknown.isEmpty, !specs.isEmpty else {
+            for name in unknown {
+                FileHandle.standardError.write(Data(
+                    "hotkey: unknown name \"\(name)\", using default \(defaultNames)\n".utf8
+                ))
+            }
+            return defaults
+        }
+        return specs
+    }
+}
+
+/// Watches the configured push-to-talk keys and emits press/release edges.
 /// Requires Accessibility permission. If the tap fails to register, callers
 /// will see an error from `start()`.
 final class HotkeyMonitor {
     enum Event { case pressed, released }
     enum HotkeyError: Error { case tapCreateFailed }
 
-    /// Mask of the modifier we treat as the hotkey. Fn = `.maskSecondaryFn`.
-    private let mask: CGEventFlags
-    /// When set, only flagsChanged events with this keycode are considered,
-    /// so left/right variants of a modifier can be told apart.
-    private let keycode: Int64?
+    private let specs: [HotkeySpec]
     private let debug: Bool
     private var onEvent: ((Event) -> Void)?
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var isPressed = false
+    /// Index into `specs` of the key currently holding the capture, if any.
+    /// Whichever key goes down first owns the hold until it comes back up.
+    private var activeIndex: Int?
 
-    init(mask: CGEventFlags = .maskSecondaryFn, keycode: Int64? = nil, debug: Bool = false) {
-        self.mask = mask
-        self.keycode = keycode
+    init(specs: [HotkeySpec] = HotkeySpec.defaults, debug: Bool = false) {
+        self.specs = specs.isEmpty ? HotkeySpec.defaults : specs
         self.debug = debug
     }
+
+    var activeNames: String { specs.map(\.name).joined(separator: ",") }
 
     func start(onEvent: @escaping (Event) -> Void) throws {
         self.onEvent = onEvent
@@ -91,11 +135,22 @@ final class HotkeyMonitor {
                 ))
         }
         guard type == .flagsChanged else { return }
-        if let keycode, event.getIntegerValueField(.keyboardEventKeycode) != keycode { return }
-        let pressed = event.flags.contains(mask)
-        guard pressed != isPressed else { return }
-        isPressed = pressed
-        onEvent?(pressed ? .pressed : .released)
+
+        let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+        for (index, spec) in specs.enumerated() {
+            if let wanted = spec.keycode, keycode != wanted { continue }
+            let pressed = event.flags.contains(spec.mask)
+            if activeIndex == nil, pressed {
+                activeIndex = index
+                onEvent?(.pressed)
+                return
+            }
+            if activeIndex == index, !pressed {
+                activeIndex = nil
+                onEvent?(.released)
+                return
+            }
+        }
     }
 }
 
