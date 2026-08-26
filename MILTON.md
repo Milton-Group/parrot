@@ -18,8 +18,23 @@ punctuation mark is part of speaking a sentence, not an attempt to use the hotke
 The default hotkeys are `fn,right-option`, which suits a US layout. On an AltGr layout —
 German, Swiss, French, the Nordic layouts — right Option is the key that types `@ [ ] { } | \ ~`,
 so on those keyboards every one of those characters would start and stop the audio engine and
-flash the overlay. Run `parrot run --hotkey fn` there; on the fleet, set
-`MILTON_PARROT_HOTKEY=fn` in the bootstrap.
+flash the overlay. The fix on those keyboards is `--hotkey fn`. A hand-run daemon takes it on the
+command line; on the fleet, the Milton bootstrap writes `--hotkey <value>` into the LaunchAgent's
+`ProgramArguments` from its own `PARROT_HOTKEY` constant, which `MILTON_PARROT_HOTKEY` overrides at
+bootstrap time. The binary reads no environment variable of its own, so setting one in the running
+daemon's environment changes nothing.
+
+Injected text is trimmed of leading and trailing whitespace. Two dictations in a row therefore run
+together unless the first ends in punctuation, which is where the sentence spacing comes from.
+Unicode tag characters are dropped, so a subdivision flag — the Scottish, Welsh and English ones —
+arrives as the plain black flag it is built from.
+
+**Accepted risk.** A key pressed and released entirely inside the interval between the hotkey going
+down and the hold starting is seen by neither the chord tap, which is not listening yet, nor the
+key-state scan, which reads a key that is already back up: that hold records instead of cancelling.
+Closing it needs an always-on observer of every keystroke, which this fork deliberately does not
+run — that is an Accessibility-privileged process reading everything typed, password fields
+included, to catch a window a few milliseconds wide.
 
 ## Release
 
