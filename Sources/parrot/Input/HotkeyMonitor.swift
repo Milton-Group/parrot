@@ -119,7 +119,9 @@ final class HotkeyMonitor {
     /// modifier event while the key is still held down.
     private var previousFlags: CGEventFlags = []
     /// A cancelled hotkey may not own another hold until its own key comes up.
-    private var cancelledIndex: Int?
+    /// Both hotkeys can be latched at once, so releasing one is no reason to
+    /// re-arm the other while it is still held down.
+    private var cancelledIndices: Set<Int> = []
 
     init(specs: [HotkeySpec] = HotkeySpec.defaults, debug: Bool = false) {
         self.specs = specs.isEmpty ? HotkeySpec.defaults : specs
@@ -279,9 +281,7 @@ final class HotkeyMonitor {
         case .flagsChanged:
             handleFlagsChanged(event)
         case .scrollWheel:
-            // Momentum frames are the system coasting after the fingers left the
-            // trackpad, not a new user action — and they arrive by the hundred.
-            guard event.getIntegerValueField(.scrollWheelEventMomentumPhase) == 0 else { return }
+            guard !HotkeyMonitor.isScrollNoise(event) else { return }
             cancelHold()
         case .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown:
             // Injected text arrives here as ordinary keystrokes; cancelling on
@@ -293,6 +293,25 @@ final class HotkeyMonitor {
         default:
             break
         }
+    }
+
+    /// A scroll frame that is not the user scrolling. Momentum frames are the
+    /// system coasting after the fingers left the trackpad and arrive by the
+    /// hundred; `mayBegin` is a touch resting on the trackpad and `cancelled` is
+    /// one that never became a scroll; and a frame carrying no delta at all
+    /// scrolled nothing. None of them should cost the user a recording.
+    private static func isScrollNoise(_ event: CGEvent) -> Bool {
+        if event.getIntegerValueField(.scrollWheelEventMomentumPhase) != 0 { return true }
+        let phase = event.getIntegerValueField(.scrollWheelEventScrollPhase)
+        if phase == Int64(CGScrollPhase.mayBegin.rawValue)
+            || phase == Int64(CGScrollPhase.cancelled.rawValue) {
+            return true
+        }
+        let deltas: [CGEventField] = [
+            .scrollWheelEventDeltaAxis1, .scrollWheelEventDeltaAxis2,
+            .scrollWheelEventPointDeltaAxis1, .scrollWheelEventPointDeltaAxis2,
+        ]
+        return deltas.allSatisfy { event.getIntegerValueField($0) == 0 }
     }
 
     /// Only flagsChanged gets a keycode: it identifies a modifier key, which is
@@ -320,9 +339,7 @@ final class HotkeyMonitor {
         let previous = previousFlags
         previousFlags = flags
 
-        if let latched = cancelledIndex, !specs[latched].isDown(in: flags) {
-            cancelledIndex = nil
-        }
+        cancelledIndices = cancelledIndices.filter { specs[$0].isDown(in: flags) }
 
         if let index = activeIndex {
             guard !specs[index].isDown(in: flags) else { return }
@@ -333,7 +350,7 @@ final class HotkeyMonitor {
         }
 
         for (index, spec) in specs.enumerated() {
-            guard cancelledIndex != index else { continue }
+            guard !cancelledIndices.contains(index) else { continue }
             guard !spec.isDown(in: previous), spec.isDown(in: flags) else { continue }
             if let wanted = spec.keycode, keycode != wanted { continue }
             beginHold(index: index, at: event.timestamp)
@@ -362,9 +379,7 @@ final class HotkeyMonitor {
     private func syncFlagsState() {
         let live = CGEventSource.flagsState(.combinedSessionState)
         previousFlags = live
-        if let latched = cancelledIndex, !specs[latched].isDown(in: live) {
-            cancelledIndex = nil
-        }
+        cancelledIndices = cancelledIndices.filter { specs[$0].isDown(in: live) }
     }
 
     private func nonModifierKeyIsDown() -> Bool {
@@ -389,7 +404,7 @@ final class HotkeyMonitor {
 
     private func cancelHold(_ reason: CancelReason = .chord) {
         guard let index = activeIndex else { return }
-        cancelledIndex = index
+        cancelledIndices.insert(index)
         endHold()
         emit(.cancelled(reason))
     }
