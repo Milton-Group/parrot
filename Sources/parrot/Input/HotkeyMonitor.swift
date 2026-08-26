@@ -246,14 +246,19 @@ final class HotkeyMonitor {
         guard let tap else { return }
         CGEvent.tapEnable(tap: tap, enable: true)
         if !CGEvent.tapIsEnabled(tap: tap) {
-            FileHandle.standardError.write(Data("tap: re-enable FAILED (\(reason))\n".utf8))
+            FileHandle.standardError.write(Data(
+                "tap: re-enable FAILED (\(reason)); exiting so launchd restarts the tap\n".utf8
+            ))
+            // KeepAlive restarts us; a throttled restart loop is visible where a
+            // silent dead tap is not.
+            exit(1)
         }
         syncFlagsState()
 
         let now = Date()
         reEnables.removeAll { now.timeIntervalSince($0) > HotkeyMonitor.reEnableWindow }
-        if reEnables.count <= HotkeyMonitor.reEnableAlertCount { alertedThisWindow = false }
         reEnables.append(now)
+        if reEnables.count <= HotkeyMonitor.reEnableAlertCount { alertedThisWindow = false }
         FileHandle.standardError.write(Data("tap: re-enabled (\(reason))\n".utf8))
         // Say it once per window, not once per event, and keep re-enabling
         // either way: the LaunchAgent restarts the process, so exiting here
