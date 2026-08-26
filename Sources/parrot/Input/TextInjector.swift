@@ -28,7 +28,7 @@ enum TextInjector {
     /// Splits long strings into chunks because the underlying API has a
     /// per-event character limit (~20 chars).
     static func inject(_ text: String) {
-        let sanitized = stripControlCharacters(text)
+        let sanitized = sanitize(text)
         guard !sanitized.isEmpty else { return }
 
         let utf16 = Array(sanitized.utf16)
@@ -45,21 +45,30 @@ enum TextInjector {
         }
     }
 
-    /// Drops every control, format and separator scalar: C0/C1 (tab and newline
-    /// included), the line and paragraph separators, and the invisible format
-    /// characters — zero-width spaces and joiners, and the bidi overrides and
-    /// isolates. A transcript containing a newline would otherwise submit
-    /// whatever field the cursor is in — a shell prompt, a chat box, a form —
-    /// and a bidi override can make injected text read as something other than
-    /// what was injected.
-    private static func stripControlCharacters(_ text: String) -> String {
-        let kept = text.unicodeScalars.filter { scalar in
+    /// Control characters and the line and paragraph separators become a single
+    /// space, and runs of whitespace then collapse. Injecting them literally
+    /// would submit whatever field the cursor is in — a shell prompt, a chat
+    /// box, a form — but dropping them outright welds the words on either side
+    /// together.
+    ///
+    /// Format characters are dropped: the zero-width spaces and direction marks
+    /// are invisible padding, and the bidi overrides and isolates can make
+    /// injected text read as something other than what was injected. The
+    /// exceptions are the zero-width non-joiner and joiner, which are ordinary
+    /// spelling in Indic and Arabic scripts and hold emoji sequences together.
+    private static func sanitize(_ text: String) -> String {
+        var kept = String.UnicodeScalarView()
+        for scalar in text.unicodeScalars {
             switch scalar.properties.generalCategory {
-            case .control, .format, .lineSeparator, .paragraphSeparator: return false
-            default: return true
+            case .control, .lineSeparator, .paragraphSeparator:
+                kept.append(" ")
+            case .format:
+                if scalar == "\u{200C}" || scalar == "\u{200D}" { kept.append(scalar) }
+            default:
+                kept.append(scalar)
             }
         }
-        return String(String.UnicodeScalarView(kept))
+        return String(kept).split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
     private static func postChunk(_ chunk: inout [UniChar]) {
