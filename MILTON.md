@@ -10,9 +10,11 @@ unreviewed base, not a reviewed delta.
 
 ## Release
 
-Tag `v0.0.5-milton.N` on `main` triggers `.github/workflows/release.yml`, which runs in the
-gated `release` environment. Its reviewer is the repository owner, so the gate is a deliberate
-pause and an audit line, not a two-person control. The job builds `parrot-macos-arm64.tar.gz`,
+Tag `v0.0.5-milton.N` on `main` triggers `.github/workflows/release.yml`. The release control
+is the tag ruleset: only an organisation admin can create, move or delete a `v*` tag, and
+creating the tag is the approval. The `release` environment carries a tag-pattern deployment
+policy only; required reviewers on a private-repo environment need GitHub Enterprise, which this
+organisation does not have, so there is no approval pause and none is claimed. The job builds `parrot-macos-arm64.tar.gz`,
 mints an `actions/attest-build-provenance` attestation, verifies that attestation against this
 repo, this workflow and the tag before publishing, and attaches the tarball, its `.sha256`
 sidecar and the Sigstore bundle to the release.
