@@ -166,6 +166,7 @@ final class HotkeyMonitor {
 
         self.tap = tap
         self.runLoopSource = source
+        syncFlagsState()
     }
 
     func stop() {
@@ -254,6 +255,7 @@ final class HotkeyMonitor {
             }
         }
         guard reEnabled else { return }
+        syncFlagsState()
 
         let now = Date()
         reEnables.removeAll { now.timeIntervalSince($0) > HotkeyMonitor.reEnableWindow }
@@ -355,6 +357,18 @@ final class HotkeyMonitor {
         emit(.pressed)
     }
 
+    /// Both the rising-edge test and the cancel latch read from the last flags
+    /// word seen. Any event missed — before the tap existed, or while it was
+    /// disabled — would leave that word, and a latch keyed off it, stuck; the
+    /// live modifier state is the ground truth to re-seed them from.
+    private func syncFlagsState() {
+        let live = CGEventSource.flagsState(.combinedSessionState)
+        previousFlags = live
+        if let latched = cancelledIndex, !specs[latched].isDown(in: live) {
+            cancelledIndex = nil
+        }
+    }
+
     private func nonModifierKeyIsDown() -> Bool {
         for key in CGKeyCode(0)...HotkeyMonitor.highestKeycode {
             if HotkeyMonitor.modifierKeycodes.contains(key) { continue }
@@ -368,7 +382,7 @@ final class HotkeyMonitor {
         return Double(timestamp - pressedTimestamp) * HotkeyMonitor.machToSeconds
     }
 
-    fileprivate func cancelHold(_ reason: CancelReason = .chord) {
+    private func cancelHold(_ reason: CancelReason = .chord) {
         guard let index = activeIndex else { return }
         cancelledIndex = index
         endHold()
