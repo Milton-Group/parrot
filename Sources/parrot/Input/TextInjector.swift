@@ -10,9 +10,10 @@ enum TextInjector {
     /// Splits long strings into chunks because the underlying API has a
     /// per-event character limit (~20 chars).
     static func inject(_ text: String) {
-        guard !text.isEmpty else { return }
+        let sanitized = stripControlCharacters(text)
+        guard !sanitized.isEmpty else { return }
 
-        let utf16 = Array(text.utf16)
+        let utf16 = Array(sanitized.utf16)
         let chunkSize = 20
         var index = 0
 
@@ -22,6 +23,19 @@ enum TextInjector {
             postChunk(&chunk)
             index = end
         }
+    }
+
+    /// Drops C0/C1 control characters, tab and newline included. A transcript
+    /// that contains a newline would otherwise submit whatever field the cursor
+    /// happens to be in — a shell prompt, a chat box, a form.
+    private static func stripControlCharacters(_ text: String) -> String {
+        let kept = text.unicodeScalars.filter { scalar in
+            switch scalar.value {
+            case 0x00...0x1F, 0x7F, 0x80...0x9F: return false
+            default: return true
+            }
+        }
+        return String(String.UnicodeScalarView(kept))
     }
 
     private static func postChunk(_ chunk: inout [UniChar]) {
