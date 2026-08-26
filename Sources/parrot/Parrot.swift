@@ -111,6 +111,15 @@ struct Run: ParsableCommand {
                     } catch {
                         FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
                     }
+                case .cancelled(let reason):
+                    // stop() releases the input device and drops the buffer, so a
+                    // cancelled hold never reaches the transcriber.
+                    _ = capture.stop()
+                    MainActor.assumeIsolated {
+                        overlay?.hide()
+                        menuBar.setRecording(false)
+                    }
+                    FileHandle.standardError.write(Data("cancelled: \(reason.rawValue)\n".utf8))
                 case .released:
                     let samples = capture.stop()
                     MainActor.assumeIsolated {

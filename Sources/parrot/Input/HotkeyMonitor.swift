@@ -52,17 +52,31 @@ struct HotkeySpec {
 /// Requires Accessibility permission. If the tap fails to register, callers
 /// will see an error from `start()`.
 final class HotkeyMonitor {
-    enum Event { case pressed, released }
+    enum CancelReason: String { case chord, short }
+    enum Event { case pressed, released, cancelled(CancelReason) }
     enum HotkeyError: Error { case tapCreateFailed }
+
+    /// A hold shorter than this is a stray tap, not dictation.
+    private static let minimumHold: TimeInterval = 0.3
+
+    private static let chordMask: CGEventMask =
+        (1 << CGEventType.keyDown.rawValue)
+        | (1 << CGEventType.leftMouseDown.rawValue)
+        | (1 << CGEventType.rightMouseDown.rawValue)
+        | (1 << CGEventType.otherMouseDown.rawValue)
+        | (1 << CGEventType.scrollWheel.rawValue)
 
     private let specs: [HotkeySpec]
     private let debug: Bool
     private var onEvent: ((Event) -> Void)?
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var chordTap: CFMachPort?
+    private var chordSource: CFRunLoopSource?
     /// Index into `specs` of the key currently holding the capture, if any.
     /// Whichever key goes down first owns the hold until it comes back up.
     private var activeIndex: Int?
+    private var pressedAt: Date?
 
     init(specs: [HotkeySpec] = HotkeySpec.defaults, debug: Bool = false) {
         self.specs = specs.isEmpty ? HotkeySpec.defaults : specs
@@ -87,22 +101,7 @@ final class HotkeyMonitor {
             (1 << CGEventType.flagsChanged.rawValue)
             | (1 << CGEventType.keyDown.rawValue)
             | (1 << CGEventType.keyUp.rawValue)
-        let userInfo = Unmanaged.passUnretained(self).toOpaque()
-
-        // .cgSessionEventTap is the right level for an accessibility-granted
-        // user process (.cghidEventTap requires root).
-        guard
-            let tap = CGEvent.tapCreate(
-                tap: .cgSessionEventTap,
-                place: .headInsertEventTap,
-                options: .listenOnly,
-                eventsOfInterest: mask,
-                callback: hotkeyCallback,
-                userInfo: userInfo
-            )
-        else {
-            throw HotkeyError.tapCreateFailed
-        }
+        guard let tap = makeTap(mask: mask) else { throw HotkeyError.tapCreateFailed }
 
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
@@ -113,6 +112,7 @@ final class HotkeyMonitor {
     }
 
     func stop() {
+        stopChordTap()
         if let tap {
             CGEvent.tapEnable(tap: tap, enable: false)
         }
@@ -122,6 +122,44 @@ final class HotkeyMonitor {
         tap = nil
         runLoopSource = nil
         onEvent = nil
+    }
+
+    private func makeTap(mask: CGEventMask) -> CFMachPort? {
+        // .cgSessionEventTap is the right level for an accessibility-granted
+        // user process (.cghidEventTap requires root).
+        CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: mask,
+            callback: hotkeyCallback,
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        )
+    }
+
+    /// Clicks, scrolls and keystrokes cancel a hold, but they are far too chatty
+    /// to leave in a permanently installed mask: scroll momentum alone delivers
+    /// hundreds of events a second, and every event macOS hands us counts
+    /// against the budget it uses to decide our tap has stalled. So the wide
+    /// mask lives in a second tap that exists only while a hotkey is held.
+    private func startChordTap() {
+        guard chordTap == nil, let tap = makeTap(mask: HotkeyMonitor.chordMask) else { return }
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        chordTap = tap
+        chordSource = source
+    }
+
+    private func stopChordTap() {
+        if let chordTap {
+            CGEvent.tapEnable(tap: chordTap, enable: false)
+        }
+        if let chordSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), chordSource, .commonModes)
+        }
+        chordTap = nil
+        chordSource = nil
     }
 
     fileprivate func handle(type: CGEventType, event: CGEvent) {
@@ -134,23 +172,48 @@ final class HotkeyMonitor {
                         .utf8
                 ))
         }
-        guard type == .flagsChanged else { return }
 
+        switch type {
+        case .flagsChanged:
+            handleFlagsChanged(event)
+        case .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel:
+            cancelHold()
+        default:
+            break
+        }
+    }
+
+    private func handleFlagsChanged(_ event: CGEvent) {
         let keycode = event.getIntegerValueField(.keyboardEventKeycode)
         for (index, spec) in specs.enumerated() {
             if let wanted = spec.keycode, keycode != wanted { continue }
             let pressed = event.flags.contains(spec.mask)
             if activeIndex == nil, pressed {
                 activeIndex = index
+                pressedAt = Date()
+                startChordTap()
                 onEvent?(.pressed)
                 return
             }
             if activeIndex == index, !pressed {
-                activeIndex = nil
-                onEvent?(.released)
+                let held = pressedAt.map { Date().timeIntervalSince($0) } ?? 0
+                endHold()
+                onEvent?(held < HotkeyMonitor.minimumHold ? .cancelled(.short) : .released)
                 return
             }
         }
+    }
+
+    private func cancelHold() {
+        guard activeIndex != nil else { return }
+        endHold()
+        onEvent?(.cancelled(.chord))
+    }
+
+    private func endHold() {
+        activeIndex = nil
+        pressedAt = nil
+        stopChordTap()
     }
 }
 
