@@ -75,8 +75,17 @@ jobs:
         run: |
           set -euo pipefail
           gh attestation download parrot-macos-arm64.tar.gz --repo Milton-Group/parrot
-          digest=$(shasum -a 256 parrot-macos-arm64.tar.gz | awk '{print $1}')
-          mv "sha256:${digest}.jsonl" parrot-macos-arm64.tar.gz.sigstore.json
+          # gh names the bundle after the subject digest ("sha256:<hex>.jsonl").
+          # Glob for it rather than reconstructing the name, so a change in that
+          # convention fails loudly here instead of publishing a release whose
+          # bundle the infra pin PR then cannot vendor.
+          shopt -s nullglob
+          bundles=(*.jsonl)
+          if [ "${#bundles[@]}" -ne 1 ]; then
+            echo "expected exactly one downloaded attestation bundle, got ${#bundles[@]}" >&2
+            exit 1
+          fi
+          mv "${bundles[0]}" parrot-macos-arm64.tar.gz.sigstore.json
           ls -lh
 
       - name: release notes
