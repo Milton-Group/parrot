@@ -67,6 +67,15 @@ struct Run: ParsableCommand {
             chosenModel = m
         }
 
+        // Checked before the model loads, not after: an ungranted daemon that
+        // warms up first pays a multi-second model load on every relaunch before
+        // discovering it cannot register a tap.
+        do {
+            try HotkeyMonitor.requireAccessibility()
+        } catch HotkeyMonitor.HotkeyError.accessibilityNotGranted {
+            exitAwaitingAccessibilityGrant()
+        }
+
         let transcriber = WhisperKitTranscriber(model: chosenModel)
         let warmupSemaphore = DispatchSemaphore(value: 0)
         var warmupError: Error?
@@ -170,6 +179,8 @@ struct Run: ParsableCommand {
                     }
                 }
             }
+        } catch HotkeyMonitor.HotkeyError.accessibilityNotGranted {
+            exitAwaitingAccessibilityGrant()
         } catch {
             FileHandle.standardError.write(Data("failed to register hotkey tap: \(error)\n".utf8))
             FileHandle.standardError.write(Data("run `parrot setup` to configure permissions.\n".utf8))
@@ -190,6 +201,14 @@ struct Run: ParsableCommand {
         ))
         app.run()
     }
+}
+
+/// The caller has already printed the "grant access, then relaunch" line. Exit
+/// 0 is deliberate: the LaunchAgent's `KeepAlive { SuccessfulExit: false }` stops
+/// relaunching on a clean exit, where a non-zero one would restart the daemon
+/// every 10 seconds and reload the model each time.
+private func exitAwaitingAccessibilityGrant() -> Never {
+    exit(0)
 }
 
 struct Doctor: ParsableCommand {

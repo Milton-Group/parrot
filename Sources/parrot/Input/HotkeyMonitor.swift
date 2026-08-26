@@ -75,7 +75,7 @@ final class HotkeyMonitor {
         case tapDisabled = "tap-disabled"
     }
     enum Event { case pressed, released, cancelled(CancelReason) }
-    enum HotkeyError: Error { case tapCreateFailed }
+    enum HotkeyError: Error { case tapCreateFailed, accessibilityNotGranted }
 
     /// A hold shorter than this is a stray tap, not dictation.
     private static let minimumHold: TimeInterval = 0.3
@@ -126,17 +126,23 @@ final class HotkeyMonitor {
 
     var activeNames: String { specs.map(\.name).joined(separator: ",") }
 
-    func start(onEvent: @escaping (Event) -> Void) throws {
-        self.onEvent = onEvent
-
+    /// Throws unless Accessibility is granted, opening the system prompt when it
+    /// is not. Safe to call more than once per launch: the prompt is raised only
+    /// while the grant is missing, and the first caller to see that exits.
+    static func requireAccessibility() throws {
         let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        let trusted = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
-        if !trusted {
+        guard AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary) else {
             FileHandle.standardError.write(Data(
                 "accessibility not granted — system prompt opened. Grant access, then quit and relaunch parrot.\n".utf8
             ))
-            throw HotkeyError.tapCreateFailed
+            throw HotkeyError.accessibilityNotGranted
         }
+    }
+
+    func start(onEvent: @escaping (Event) -> Void) throws {
+        self.onEvent = onEvent
+
+        try HotkeyMonitor.requireAccessibility()
 
         // Only flagsChanged drives the hotkey. keyDown/keyUp are subscribed here
         // *only* under --debug-hotkey: listening to every keystroke system-wide
