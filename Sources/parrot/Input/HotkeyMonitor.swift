@@ -59,6 +59,11 @@ final class HotkeyMonitor {
     /// A hold shorter than this is a stray tap, not dictation.
     private static let minimumHold: TimeInterval = 0.3
 
+    /// Repeated re-enables mean the tap keeps stalling; say so loudly rather
+    /// than leaving one quiet line per event in a log nobody reads.
+    private static let reEnableWindow: TimeInterval = 600
+    private static let reEnableAlertCount = 5
+
     private static let chordMask: CGEventMask =
         (1 << CGEventType.keyDown.rawValue)
         | (1 << CGEventType.leftMouseDown.rawValue)
@@ -77,6 +82,7 @@ final class HotkeyMonitor {
     /// Whichever key goes down first owns the hold until it comes back up.
     private var activeIndex: Int?
     private var pressedAt: Date?
+    private var reEnables: [Date] = []
 
     init(specs: [HotkeySpec] = HotkeySpec.defaults, debug: Bool = false) {
         self.specs = specs.isEmpty ? HotkeySpec.defaults : specs
@@ -172,13 +178,30 @@ final class HotkeyMonitor {
 
     /// Called from the tap callback when macOS disables our tap. Without this
     /// the process keeps running, the menu bar icon stays put, and the hotkey
-    /// silently does nothing until the user restarts parrot.
-    fileprivate func reEnable() {
-        guard let tap else { return }
-        CGEvent.tapEnable(tap: tap, enable: true)
-        FileHandle.standardError.write(Data(
-            "event tap was disabled by the system — re-enabled\n".utf8
-        ))
+    /// silently does nothing until the user restarts parrot. The callback
+    /// cannot say which of our taps was disabled, so both are re-enabled.
+    fileprivate func reEnable(reason: String) {
+        var reEnabled = false
+        if let tap {
+            CGEvent.tapEnable(tap: tap, enable: true)
+            reEnabled = true
+        }
+        if let chordTap {
+            CGEvent.tapEnable(tap: chordTap, enable: true)
+            reEnabled = true
+        }
+        guard reEnabled else { return }
+
+        let now = Date()
+        reEnables.removeAll { now.timeIntervalSince($0) > HotkeyMonitor.reEnableWindow }
+        reEnables.append(now)
+        FileHandle.standardError.write(Data("tap: re-enabled (\(reason))\n".utf8))
+        if reEnables.count >= HotkeyMonitor.reEnableAlertCount {
+            let minutes = Int(HotkeyMonitor.reEnableWindow / 60)
+            FileHandle.standardError.write(Data(
+                "tap: re-enabled \(reEnables.count) times in the last \(minutes) minutes\n".utf8
+            ))
+        }
     }
 
     fileprivate func handle(type: CGEventType, event: CGEvent) {
@@ -246,8 +269,9 @@ private func hotkeyCallback(
     let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
 
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        let reason = type == .tapDisabledByTimeout ? "timeout" : "user input"
         // The tap must be re-enabled from the run loop that owns it.
-        DispatchQueue.main.async { monitor.reEnable() }
+        DispatchQueue.main.async { monitor.reEnable(reason: reason) }
         return Unmanaged.passUnretained(event)
     }
 
