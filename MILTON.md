@@ -15,6 +15,12 @@ application instead of dictating; modifier-only presses (Shift, Command, Control
 Option key) deliberately do not cancel, because holding one to capitalise or to reach a
 punctuation mark is part of speaking a sentence, not an attempt to use the hotkey as a chord.
 
+The default hotkeys are `fn,right-option`, which suits a US layout. On an AltGr layout —
+German, Swiss, French, the Nordic layouts — right Option is the key that types `@ [ ] { } | \ ~`,
+so on those keyboards every one of those characters would start and stop the audio engine and
+flash the overlay. Run `parrot run --hotkey fn` there; on the fleet, set
+`MILTON_PARROT_HOTKEY=fn` in the bootstrap.
+
 ## Release
 
 Tag `v0.0.5-milton.N` on `main` triggers `.github/workflows/release.yml`. The release control

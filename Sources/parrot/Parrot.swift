@@ -194,7 +194,7 @@ struct Run: ParsableCommand {
 
 struct Doctor: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Check microphone, accessibility, and Fn key configuration."
+        abstract: "Check microphone, accessibility, and hotkey configuration."
     )
 
     func run() throws {
