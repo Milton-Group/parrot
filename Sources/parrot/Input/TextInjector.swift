@@ -25,13 +25,17 @@ enum TextInjector {
         }
     }
 
-    /// Drops C0/C1 control characters, tab and newline included. A transcript
-    /// that contains a newline would otherwise submit whatever field the cursor
-    /// happens to be in — a shell prompt, a chat box, a form.
+    /// Drops every control, format and separator scalar: C0/C1 (tab and newline
+    /// included), the line and paragraph separators, and the invisible format
+    /// characters — zero-width spaces and joiners, and the bidi overrides and
+    /// isolates. A transcript containing a newline would otherwise submit
+    /// whatever field the cursor is in — a shell prompt, a chat box, a form —
+    /// and a bidi override can make injected text read as something other than
+    /// what was injected.
     private static func stripControlCharacters(_ text: String) -> String {
         let kept = text.unicodeScalars.filter { scalar in
-            switch scalar.value {
-            case 0x00...0x1F, 0x7F, 0x80...0x9F: return false
+            switch scalar.properties.generalCategory {
+            case .control, .format, .lineSeparator, .paragraphSeparator: return false
             default: return true
             }
         }
