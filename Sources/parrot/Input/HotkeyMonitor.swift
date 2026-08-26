@@ -31,15 +31,18 @@ struct HotkeySpec {
     }
 
     /// Parses a comma-separated list, matching names case-insensitively after
-    /// trimming. An unknown name warns and falls back to the compiled default
-    /// rather than exiting: a typo in the fleet's launch arguments must not
-    /// leave every re-running Mac with a daemon that refuses to start.
+    /// trimming. Empty tokens are skipped, so a trailing comma costs nothing.
+    /// An unknown name warns and is dropped, keeping whatever else parsed; the
+    /// compiled default is used only when nothing valid remains, rather than
+    /// exiting — a typo in the fleet's launch arguments must not leave every
+    /// re-running Mac with a daemon that refuses to start.
     static func parse(_ raw: String) -> [HotkeySpec] {
         var specs: [HotkeySpec] = []
         var unknown: [String] = []
 
-        for token in raw.split(separator: ",", omittingEmptySubsequences: false) {
+        for token in raw.split(separator: ",", omittingEmptySubsequences: true) {
             let name = token.trimmingCharacters(in: .whitespaces).lowercased()
+            if name.isEmpty { continue }
             switch name {
             case fn.name:
                 if !specs.contains(where: { $0.name == fn.name }) { specs.append(fn) }
@@ -50,15 +53,15 @@ struct HotkeySpec {
             }
         }
 
-        guard unknown.isEmpty, !specs.isEmpty else {
-            for name in unknown {
-                FileHandle.standardError.write(Data(
-                    "hotkey: unknown name \"\(name)\", using default \(defaultNames)\n".utf8
-                ))
-            }
-            return defaults
+        for name in unknown {
+            let fallback = specs.isEmpty
+                ? "using default \(defaultNames)"
+                : "keeping \(specs.map(\.name).joined(separator: ","))"
+            FileHandle.standardError.write(Data(
+                "hotkey: unknown name \"\(name)\", \(fallback)\n".utf8
+            ))
         }
-        return specs
+        return specs.isEmpty ? defaults : specs
     }
 }
 
@@ -278,17 +281,18 @@ final class HotkeyMonitor {
         }
     }
 
-    /// Keycodes and modifier flags are only meaningful for keyboard events, and
-    /// a mouse event's payload is its cursor position — never logged, not even
-    /// under --debug-hotkey.
+    /// Only flagsChanged gets a keycode: it identifies a modifier key, which is
+    /// the thing being debugged. A keyDown's keycode is what the user is typing
+    /// — passwords included — and a mouse event's payload is the cursor
+    /// position, so those log the event type and nothing else.
     private func debugLog(type: CGEventType, event: CGEvent) {
         switch type {
-        case .flagsChanged, .keyDown, .keyUp:
+        case .flagsChanged:
             let flags = event.flags
             let keycode = event.getIntegerValueField(.keyboardEventKeycode)
             FileHandle.standardError.write(
                 Data(
-                    "  [debug] type=\(type.rawValue) keycode=\(keycode) flags=\(String(flags.rawValue, radix: 16))\n"
+                    "  [debug] flagsChanged keycode=\(keycode) flags=\(String(flags.rawValue, radix: 16))\n"
                         .utf8
                 ))
         default:
