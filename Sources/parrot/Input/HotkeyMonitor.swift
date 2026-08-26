@@ -9,12 +9,26 @@ struct HotkeySpec {
     let name: String
     let mask: CGEventFlags
     let keycode: Int64?
+    /// The key's own device-specific modifier bit, for keys whose `mask` is
+    /// shared with their opposite-hand twin. macOS ORs these raw bits into the
+    /// same flags word: NX_DEVICERALTKEYMASK (0x40) is the right Option key
+    /// alone, so a right-option hold stays observable — and its release
+    /// detectable — while the left Option key is also down.
+    let deviceMask: UInt64?
 
-    static let fn = HotkeySpec(name: "fn", mask: .maskSecondaryFn, keycode: nil)
-    static let rightOption = HotkeySpec(name: "right-option", mask: .maskAlternate, keycode: 61)
+    static let fn = HotkeySpec(name: "fn", mask: .maskSecondaryFn, keycode: nil, deviceMask: nil)
+    static let rightOption = HotkeySpec(
+        name: "right-option", mask: .maskAlternate, keycode: 61, deviceMask: 0x40
+    )
 
     static let defaults: [HotkeySpec] = [fn, rightOption]
     static let defaultNames = "fn,right-option"
+
+    /// Whether this key is physically down in the given flags word.
+    func isDown(in flags: CGEventFlags) -> Bool {
+        if let deviceMask { return flags.rawValue & deviceMask != 0 }
+        return flags.contains(mask)
+    }
 
     /// Parses a comma-separated list, matching names case-insensitively after
     /// trimming. An unknown name warns and falls back to the compiled default
@@ -83,6 +97,12 @@ final class HotkeyMonitor {
     private var activeIndex: Int?
     private var pressedAt: Date?
     private var reEnables: [Date] = []
+    /// Last flags word seen, so a press is a rising edge rather than "the flag
+    /// is still set" — otherwise a cancelled hold re-arms on the next unrelated
+    /// modifier event while the key is still held down.
+    private var previousFlags: CGEventFlags = []
+    /// A cancelled hotkey may not own another hold until its own key comes up.
+    private var cancelledIndex: Int?
 
     init(specs: [HotkeySpec] = HotkeySpec.defaults, debug: Bool = false) {
         self.specs = specs.isEmpty ? HotkeySpec.defaults : specs
@@ -240,29 +260,39 @@ final class HotkeyMonitor {
 
     private func handleFlagsChanged(_ event: CGEvent) {
         let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+        let flags = event.flags
+        let previous = previousFlags
+        previousFlags = flags
+
+        if let latched = cancelledIndex, !specs[latched].isDown(in: flags) {
+            cancelledIndex = nil
+        }
+
+        if let index = activeIndex {
+            guard !specs[index].isDown(in: flags) else { return }
+            let held = pressedAt.map { Date().timeIntervalSince($0) } ?? 0
+            endHold()
+            onEvent?(held < HotkeyMonitor.minimumHold ? .cancelled(.short) : .released)
+            return
+        }
+
         for (index, spec) in specs.enumerated() {
+            guard cancelledIndex != index else { continue }
+            guard !spec.isDown(in: previous), spec.isDown(in: flags) else { continue }
             if let wanted = spec.keycode, keycode != wanted { continue }
-            let pressed = event.flags.contains(spec.mask)
-            if activeIndex == nil, pressed {
-                activeIndex = index
-                pressedAt = Date()
-                startChordTap()
-                onEvent?(.pressed)
-                return
-            }
-            if activeIndex == index, !pressed {
-                let held = pressedAt.map { Date().timeIntervalSince($0) } ?? 0
-                endHold()
-                onEvent?(held < HotkeyMonitor.minimumHold ? .cancelled(.short) : .released)
-                return
-            }
+            activeIndex = index
+            pressedAt = Date()
+            startChordTap()
+            onEvent?(.pressed)
+            return
         }
     }
 
-    private func cancelHold() {
-        guard activeIndex != nil else { return }
+    private func cancelHold(_ reason: CancelReason = .chord) {
+        guard let index = activeIndex else { return }
+        cancelledIndex = index
         endHold()
-        onEvent?(.cancelled(.chord))
+        onEvent?(.cancelled(reason))
     }
 
     private func endHold() {
