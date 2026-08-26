@@ -169,9 +169,11 @@ final class HotkeyMonitor {
     }
 
     func stop() {
-        stopChordTap()
+        // Ends any hold in flight, which is what releases the microphone.
+        endHold()
         if let tap {
             CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
         }
         if let source = runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
@@ -214,7 +216,9 @@ final class HotkeyMonitor {
         if let chordTap {
             CGEvent.tapEnable(tap: chordTap, enable: false)
             // This tap is created and destroyed on every hold, so the port has
-            // to be invalidated rather than just dropped.
+            // to be invalidated rather than just dropped. A chord cancel gets
+            // here from inside this port's own callback; CoreFoundation defers
+            // the invalidation until the callback returns, so that is safe.
             CFMachPortInvalidate(chordTap)
         }
         if let chordSource {
@@ -274,7 +278,12 @@ final class HotkeyMonitor {
         switch type {
         case .flagsChanged:
             handleFlagsChanged(event)
-        case .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel:
+        case .scrollWheel:
+            // Momentum frames are the system coasting after the fingers left the
+            // trackpad, not a new user action — and they arrive by the hundred.
+            guard event.getIntegerValueField(.scrollWheelEventMomentumPhase) == 0 else { return }
+            cancelHold()
+        case .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown:
             cancelHold()
         default:
             break
