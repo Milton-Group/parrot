@@ -168,6 +168,9 @@ final class HotkeyMonitor {
     private func stopChordTap() {
         if let chordTap {
             CGEvent.tapEnable(tap: chordTap, enable: false)
+            // This tap is created and destroyed on every hold, so the port has
+            // to be invalidated rather than just dropped.
+            CFMachPortInvalidate(chordTap)
         }
         if let chordSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), chordSource, .commonModes)
