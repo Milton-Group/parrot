@@ -359,6 +359,14 @@ final class HotkeyMonitor {
         if let index = activeIndex {
             guard !specs[index].isDown(in: flags) else { return }
             let held = holdDuration(endingAt: event.timestamp)
+            // The chord tap is a separate run loop source, so a keyDown that
+            // arrived before this release can still be waiting behind it. The
+            // live key state settles that: a key down here was chorded with the
+            // hotkey, however the two sources happened to be ordered.
+            if nonModifierKeyIsDown() {
+                cancelHold(.chord)
+                return
+            }
             endHold()
             emit(held < HotkeyMonitor.minimumHold ? .cancelled(.short) : .released)
             return
