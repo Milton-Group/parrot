@@ -29,6 +29,12 @@ together unless the first ends in punctuation, which is where the sentence spaci
 Unicode tag characters are dropped, so a subdivision flag — the Scottish, Welsh and English ones —
 arrives as the plain black flag it is built from.
 
+When the Accessibility grant is missing the daemon opens the system prompt and exits 0, and
+launchd deliberately does not relaunch it (a non-zero exit would relaunch every ten seconds and
+reload the model each time). After granting access, bring it back by hand:
+`launchctl kickstart -k gui/$(id -u)/com.digimata.parrot`, or re-run the Mac setup; nothing
+happens on its own until the next login.
+
 **Accepted risk.** A key pressed and released entirely inside the interval between the hotkey going
 down and the hold starting is seen by neither the chord tap, which is not listening yet, nor the
 key-state scan, which reads a key that is already back up: that hold records instead of cancelling.

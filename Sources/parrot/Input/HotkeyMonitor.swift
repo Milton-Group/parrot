@@ -142,7 +142,7 @@ final class HotkeyMonitor {
         let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         guard AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary) else {
             FileHandle.standardError.write(Data(
-                "accessibility not granted — system prompt opened. Grant access, then quit and relaunch parrot.\n".utf8
+                "accessibility not granted — system prompt opened. Grant access, then relaunch parrot: launchctl kickstart -k gui/$(id -u)/com.digimata.parrot (or re-run the Mac setup).\n".utf8
             ))
             throw HotkeyError.accessibilityNotGranted
         }
