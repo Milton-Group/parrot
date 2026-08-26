@@ -104,10 +104,6 @@ final class HotkeyMonitor {
     private var runLoopSource: CFRunLoopSource?
     private var chordTap: CFMachPort?
     private var chordSource: CFRunLoopSource?
-    /// Set while we are the ones turning the chord tap off. macOS reports a
-    /// programmatic disable as `tapDisabledByUserInput`, which is otherwise the
-    /// system telling us our tap stalled.
-    private var selfDisabling = false
     /// Index into `specs` of the key currently holding the capture, if any.
     /// Whichever key goes down first owns the hold until it comes back up.
     private var activeIndex: Int?
@@ -221,37 +217,34 @@ final class HotkeyMonitor {
 
     private func setChordTap(enabled: Bool) {
         guard let chordTap else { return }
-        // The flag is raised before the call, not cleared after it: the
-        // notification our disable produces can land on a later run loop turn.
-        if !enabled { selfDisabling = true }
         CGEvent.tapEnable(tap: chordTap, enable: enabled)
-        if enabled { selfDisabling = false }
     }
 
-    /// Claims a `tapDisabledByUserInput` as the echo of our own disable, and
-    /// consumes the claim: the flag accounts for exactly one such event, so a
-    /// second one is the system disabling us and gets recovered from normally.
-    fileprivate func claimSelfDisable() -> Bool {
-        guard selfDisabling else { return false }
-        selfDisabling = false
-        return true
-    }
+    /// Called from the tap callback when macOS reports a tap disabled. The
+    /// callback is not told which one, and turning the chord tap off between
+    /// holds is reported exactly like the system disabling it — so nothing is
+    /// guessed here: each tap is asked whether it is still enabled. A
+    /// notification that matches neither is the echo of a disable already dealt
+    /// with, and is dropped.
+    ///
+    /// Without this the process keeps running, the menu bar icon stays put, and
+    /// the hotkey silently does nothing until the user restarts parrot.
+    fileprivate func handleTapDisabled(reason: String) {
+        let primaryDisabled = tap.map { !CGEvent.tapIsEnabled(tap: $0) } ?? false
+        let chordDisabled = chordTap.map { !CGEvent.tapIsEnabled(tap: $0) } ?? false
+        guard primaryDisabled || chordDisabled else { return }
 
-    /// Called from the tap callback when macOS disables our tap. Without this
-    /// the process keeps running, the menu bar icon stays put, and the hotkey
-    /// silently does nothing until the user restarts parrot. The callback cannot
-    /// say which of our taps was disabled, so the hotkey tap — the one that has
-    /// to be listening at all times — is the one revived.
-    fileprivate func reEnable(reason: String) {
-        // A hold cannot survive its tap being disabled: the release edge would
-        // never arrive, so the microphone would stay open and the hotkey would
-        // be dead until the process restarted. End it, discarding the audio.
-        // That also puts the chord tap back to its resting state, disabled,
-        // which is where it belongs now that no hold is running; the next hold
-        // enables it again, and enabling is what revives a disabled tap.
+        // A hold cannot survive either of its taps being disabled: the release
+        // edge would never arrive from the hotkey tap, and the chord tap would
+        // stop cancelling on keystrokes. End it, discarding the audio. That also
+        // puts the chord tap back to its resting state, disabled, which is where
+        // it belongs now that no hold is running; the next hold enables it
+        // again, and enabling is what revives a disabled tap.
         cancelHold(.tapDisabled)
 
-        guard let tap else { return }
+        // The chord tap is revived by the next hold, so only the hotkey tap —
+        // the one that has to be listening at all times — is revived here.
+        guard primaryDisabled, let tap else { return }
         CGEvent.tapEnable(tap: tap, enable: true)
         if !CGEvent.tapIsEnabled(tap: tap) {
             FileHandle.standardError.write(Data(
@@ -441,13 +434,7 @@ private func hotkeyCallback(
     // left a window in which the chord tap was not yet listening and a keystroke
     // chorded with the hotkey went unseen.
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-        // Turning the chord tap off between holds is reported the same way as
-        // the system disabling us for user input. Ours is neither counted nor
-        // "recovered" from.
-        if type == .tapDisabledByUserInput, monitor.claimSelfDisable() {
-            return Unmanaged.passUnretained(event)
-        }
-        monitor.reEnable(reason: type == .tapDisabledByTimeout ? "timeout" : "user input")
+        monitor.handleTapDisabled(reason: type == .tapDisabledByTimeout ? "timeout" : "user input")
         return Unmanaged.passUnretained(event)
     }
 
