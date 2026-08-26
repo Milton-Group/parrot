@@ -81,15 +81,6 @@ final class HotkeyMonitor {
     /// A hold shorter than this is a stray tap, not dictation.
     private static let minimumHold: TimeInterval = 0.3
 
-    /// Event timestamps are mach absolute time; hold length is measured from
-    /// them rather than from wall-clock time in the handler, which drifts with
-    /// however long the run loop took to get here.
-    private static let machToSeconds: Double = {
-        var info = mach_timebase_info_data_t()
-        mach_timebase_info(&info)
-        return Double(info.numer) / Double(info.denom) / 1_000_000_000
-    }()
-
     /// Left/right modifier keycodes. A hotkey is one of these, so its own state
     /// must never count as a chord.
     private static let modifierKeycodes: ClosedRange<CGKeyCode> = 54...63
@@ -377,9 +368,13 @@ final class HotkeyMonitor {
         return false
     }
 
+    /// A CGEvent timestamp is nanoseconds since startup, so the delta needs no
+    /// timebase conversion. Hold length is measured from the timestamps rather
+    /// than from wall-clock time in the handler, which drifts with however long
+    /// the run loop took to get here.
     private func holdDuration(endingAt timestamp: CGEventTimestamp) -> TimeInterval {
         guard let pressedTimestamp, timestamp > pressedTimestamp else { return 0 }
-        return Double(timestamp - pressedTimestamp) * HotkeyMonitor.machToSeconds
+        return Double(timestamp - pressedTimestamp) / 1_000_000_000
     }
 
     private func cancelHold(_ reason: CancelReason = .chord) {
