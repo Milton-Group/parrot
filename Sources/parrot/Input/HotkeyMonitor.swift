@@ -221,15 +221,21 @@ final class HotkeyMonitor {
 
     private func setChordTap(enabled: Bool) {
         guard let chordTap else { return }
-        // The flag is raised before the disable and stays up until the next
-        // enable, because the disable notification can arrive on a later run
-        // loop turn than the call that caused it.
-        selfDisabling = !enabled
+        // The flag is raised before the call, not cleared after it: the
+        // notification our disable produces can land on a later run loop turn.
+        if !enabled { selfDisabling = true }
         CGEvent.tapEnable(tap: chordTap, enable: enabled)
+        if enabled { selfDisabling = false }
     }
 
-    /// Whether the chord tap is off because we turned it off.
-    fileprivate var isSelfDisabling: Bool { selfDisabling }
+    /// Claims a `tapDisabledByUserInput` as the echo of our own disable, and
+    /// consumes the claim: the flag accounts for exactly one such event, so a
+    /// second one is the system disabling us and gets recovered from normally.
+    fileprivate func claimSelfDisable() -> Bool {
+        guard selfDisabling else { return false }
+        selfDisabling = false
+        return true
+    }
 
     /// Called from the tap callback when macOS disables our tap. Without this
     /// the process keeps running, the menu bar icon stays put, and the hotkey
@@ -262,9 +268,10 @@ final class HotkeyMonitor {
         reEnables.append(now)
         if reEnables.count <= HotkeyMonitor.reEnableAlertCount { alertedThisWindow = false }
         FileHandle.standardError.write(Data("tap: re-enabled (\(reason))\n".utf8))
-        // Say it once per window, not once per event, and keep re-enabling
-        // either way: the LaunchAgent restarts the process, so exiting here
-        // would only trade a noisy log for a restart loop.
+        // Said once per window rather than once per event. A re-enable that
+        // took is not worth exiting for — launchd would restart us into the
+        // same conditions — so this only warns, where the branch above, whose
+        // re-enable did not take, exits.
         if reEnables.count > HotkeyMonitor.reEnableAlertCount, !alertedThisWindow {
             alertedThisWindow = true
             let minutes = Int(HotkeyMonitor.reEnableWindow / 60)
@@ -437,7 +444,7 @@ private func hotkeyCallback(
         // Turning the chord tap off between holds is reported the same way as
         // the system disabling us for user input. Ours is neither counted nor
         // "recovered" from.
-        if type == .tapDisabledByUserInput, monitor.isSelfDisabling {
+        if type == .tapDisabledByUserInput, monitor.claimSelfDisable() {
             return Unmanaged.passUnretained(event)
         }
         monitor.reEnable(reason: type == .tapDisabledByTimeout ? "timeout" : "user input")
