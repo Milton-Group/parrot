@@ -66,12 +66,30 @@ struct HotkeySpec {
 /// Requires Accessibility permission. If the tap fails to register, callers
 /// will see an error from `start()`.
 final class HotkeyMonitor {
-    enum CancelReason: String { case chord, short }
+    enum CancelReason: String {
+        case chord
+        case short
+        case noChordTap = "no-chord-tap"
+    }
     enum Event { case pressed, released, cancelled(CancelReason) }
     enum HotkeyError: Error { case tapCreateFailed }
 
     /// A hold shorter than this is a stray tap, not dictation.
     private static let minimumHold: TimeInterval = 0.3
+
+    /// Event timestamps are mach absolute time; hold length is measured from
+    /// them rather than from wall-clock time in the handler, which drifts with
+    /// however long the run loop took to get here.
+    private static let machToSeconds: Double = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return Double(info.numer) / Double(info.denom) / 1_000_000_000
+    }()
+
+    /// Left/right modifier keycodes. A hotkey is one of these, so its own state
+    /// must never count as a chord.
+    private static let modifierKeycodes: ClosedRange<CGKeyCode> = 54...63
+    private static let highestKeycode: CGKeyCode = 127
 
     /// Repeated re-enables mean the tap keeps stalling; say so loudly rather
     /// than leaving one quiet line per event in a log nobody reads.
@@ -95,7 +113,7 @@ final class HotkeyMonitor {
     /// Index into `specs` of the key currently holding the capture, if any.
     /// Whichever key goes down first owns the hold until it comes back up.
     private var activeIndex: Int?
-    private var pressedAt: Date?
+    private var pressedTimestamp: CGEventTimestamp?
     private var reEnables: [Date] = []
     /// Last flags word seen, so a press is a rising edge rather than "the flag
     /// is still set" — otherwise a cancelled hold re-arms on the next unrelated
@@ -176,13 +194,15 @@ final class HotkeyMonitor {
     /// hundreds of events a second, and every event macOS hands us counts
     /// against the budget it uses to decide our tap has stalled. So the wide
     /// mask lives in a second tap that exists only while a hotkey is held.
-    private func startChordTap() {
-        guard chordTap == nil, let tap = makeTap(mask: HotkeyMonitor.chordMask) else { return }
+    private func startChordTap() -> Bool {
+        guard chordTap == nil else { return true }
+        guard let tap = makeTap(mask: HotkeyMonitor.chordMask) else { return false }
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         chordTap = tap
         chordSource = source
+        return true
     }
 
     private func stopChordTap() {
@@ -270,9 +290,9 @@ final class HotkeyMonitor {
 
         if let index = activeIndex {
             guard !specs[index].isDown(in: flags) else { return }
-            let held = pressedAt.map { Date().timeIntervalSince($0) } ?? 0
+            let held = holdDuration(endingAt: event.timestamp)
             endHold()
-            onEvent?(held < HotkeyMonitor.minimumHold ? .cancelled(.short) : .released)
+            emit(held < HotkeyMonitor.minimumHold ? .cancelled(.short) : .released)
             return
         }
 
@@ -280,25 +300,61 @@ final class HotkeyMonitor {
             guard cancelledIndex != index else { continue }
             guard !spec.isDown(in: previous), spec.isDown(in: flags) else { continue }
             if let wanted = spec.keycode, keycode != wanted { continue }
-            activeIndex = index
-            pressedAt = Date()
-            startChordTap()
-            onEvent?(.pressed)
+            beginHold(index: index, at: event.timestamp)
             return
         }
     }
 
-    private func cancelHold(_ reason: CancelReason = .chord) {
+    private func beginHold(index: Int, at timestamp: CGEventTimestamp) {
+        // The chord tap starts here, so a key already held when the hotkey goes
+        // down is one this monitor will never see come up: fail closed.
+        if nonModifierKeyIsDown() {
+            cancelledIndex = index
+            emit(.cancelled(.chord))
+            return
+        }
+        guard startChordTap() else {
+            FileHandle.standardError.write(Data("tap: chord tap creation failed\n".utf8))
+            cancelledIndex = index
+            emit(.cancelled(.noChordTap))
+            return
+        }
+        activeIndex = index
+        pressedTimestamp = timestamp
+        emit(.pressed)
+    }
+
+    private func nonModifierKeyIsDown() -> Bool {
+        for key in CGKeyCode(0)...HotkeyMonitor.highestKeycode {
+            if HotkeyMonitor.modifierKeycodes.contains(key) { continue }
+            if CGEventSource.keyState(.combinedSessionState, key: key) { return true }
+        }
+        return false
+    }
+
+    private func holdDuration(endingAt timestamp: CGEventTimestamp) -> TimeInterval {
+        guard let pressedTimestamp, timestamp > pressedTimestamp else { return 0 }
+        return Double(timestamp - pressedTimestamp) * HotkeyMonitor.machToSeconds
+    }
+
+    fileprivate func cancelHold(_ reason: CancelReason = .chord) {
         guard let index = activeIndex else { return }
         cancelledIndex = index
         endHold()
-        onEvent?(.cancelled(reason))
+        emit(.cancelled(reason))
     }
 
     private func endHold() {
         activeIndex = nil
-        pressedAt = nil
+        pressedTimestamp = nil
         stopChordTap()
+    }
+
+    /// Tap and hold state are settled inline in the tap callback; only the
+    /// capture and UI work the handler does is handed to the main queue.
+    private func emit(_ event: Event) {
+        guard let onEvent else { return }
+        DispatchQueue.main.async { onEvent(event) }
     }
 }
 
@@ -311,18 +367,16 @@ private func hotkeyCallback(
     guard let userInfo else { return Unmanaged.passUnretained(event) }
     let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
 
+    // The run loop source is on the main run loop, so this callback already
+    // runs on the thread that owns both taps: hold state and tap enable/disable
+    // are settled here, synchronously. Deferring them to the next run loop turn
+    // left a window in which the chord tap was not yet listening and a keystroke
+    // chorded with the hotkey went unseen.
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-        let reason = type == .tapDisabledByTimeout ? "timeout" : "user input"
-        // The tap must be re-enabled from the run loop that owns it.
-        DispatchQueue.main.async { monitor.reEnable(reason: reason) }
+        monitor.reEnable(reason: type == .tapDisabledByTimeout ? "timeout" : "user input")
         return Unmanaged.passUnretained(event)
     }
 
-    let copy = event.copy()
-    DispatchQueue.main.async {
-        if let copy {
-            monitor.handle(type: type, event: copy)
-        }
-    }
+    monitor.handle(type: type, event: event)
     return Unmanaged.passUnretained(event)
 }
