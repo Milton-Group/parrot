@@ -90,12 +90,21 @@ final class HotkeyMonitor {
     private static let reEnableWindow: TimeInterval = 600
     private static let reEnableAlertCount = 5
 
+    /// `NSSystemDefined`, which `CGEventType` has no case for. The media keys —
+    /// play/pause, volume, brightness, and the rest of the top row — are
+    /// delivered as this type rather than as `keyDown`.
+    private static let systemDefinedType: UInt32 = 14
+    /// `NX_SUBTYPE_AUX_CONTROL_BUTTONS`: the one `systemDefined` subtype that is
+    /// a key on the keyboard. The others are mouse and window bookkeeping.
+    private static let auxControlButtonSubtype: Int16 = 8
+
     private static let chordMask: CGEventMask =
         (1 << CGEventType.keyDown.rawValue)
         | (1 << CGEventType.leftMouseDown.rawValue)
         | (1 << CGEventType.rightMouseDown.rawValue)
         | (1 << CGEventType.otherMouseDown.rawValue)
         | (1 << CGEventType.scrollWheel.rawValue)
+        | (1 << CGEventMask(systemDefinedType))
 
     private let specs: [HotkeySpec]
     private let debug: Bool
@@ -297,7 +306,11 @@ final class HotkeyMonitor {
             else { return }
             cancelHold()
         default:
-            break
+            guard type.rawValue == HotkeyMonitor.systemDefinedType,
+                let media = NSEvent(cgEvent: event),
+                media.subtype.rawValue == HotkeyMonitor.auxControlButtonSubtype
+            else { return }
+            cancelHold()
         }
     }
 
