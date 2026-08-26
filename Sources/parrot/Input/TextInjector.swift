@@ -20,10 +20,6 @@ enum TextInjector {
         return source
     }()
 
-    /// True while `inject` is posting. Read on the main thread only, which is
-    /// also the only thread that writes it.
-    private(set) static var isInjecting = false
-
     /// Inject the given text at the current cursor location.
     /// Splits long strings into chunks because the underlying API has a
     /// per-event character limit (~20 chars).
@@ -35,8 +31,6 @@ enum TextInjector {
         let chunkSize = 20
         var index = 0
 
-        isInjecting = true
-        defer { isInjecting = false }
         while index < utf16.count {
             let end = min(index + chunkSize, utf16.count)
             var chunk = Array(utf16[index..<end])

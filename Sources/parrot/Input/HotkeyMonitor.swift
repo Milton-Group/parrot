@@ -387,9 +387,6 @@ final class HotkeyMonitor {
     private func nonModifierKeyIsDown() -> Bool {
         for key in CGKeyCode(0)...HotkeyMonitor.highestKeycode {
             if HotkeyMonitor.modifierKeycodes.contains(key) { continue }
-            // The injector posts its text as keycode 0. While a post is in
-            // flight that key reads as down, which would fail every hold closed.
-            if key == 0, TextInjector.isInjecting { continue }
             if CGEventSource.keyState(.combinedSessionState, key: key) { return true }
         }
         return false
