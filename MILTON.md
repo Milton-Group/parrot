@@ -8,6 +8,13 @@ The import carries three upstream commits past `v0.0.5` — two documentation/li
 and one four-line change to `Sources/parrot/UI/MenuBarController.swift`. Those are part of the
 unreviewed base, not a reviewed delta.
 
+## Behaviour
+
+A hold is cancelled by any keystroke, click or scroll, so a hotkey chord reaches the
+application instead of dictating; modifier-only presses (Shift, Command, Control, the other
+Option key) deliberately do not cancel, because holding one to capitalise or to reach a
+punctuation mark is part of speaking a sentence, not an attempt to use the hotkey as a chord.
+
 ## Release
 
 Tag `v0.0.5-milton.N` on `main` triggers `.github/workflows/release.yml`. The release control
