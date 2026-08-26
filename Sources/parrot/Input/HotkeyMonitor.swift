@@ -389,7 +389,13 @@ final class HotkeyMonitor {
         activeIndex = index
         pressedTimestamp = timestamp
         if nonModifierKeyIsDown() {
-            cancelHold(.chord)
+            // No `.pressed` was emitted for this hold, so `.cancelled` would be
+            // read as belonging to the previous one and would hide the overlay
+            // of a transcription still in flight. Nothing to tear down; say so
+            // in the log and stop.
+            cancelledIndices.insert(index)
+            endHold()
+            FileHandle.standardError.write(Data("cancelled: chord (pre-press)\n".utf8))
             return
         }
         emit(.pressed)
