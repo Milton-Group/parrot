@@ -97,12 +97,17 @@ struct Run: ParsableCommand {
         }
         warmupSemaphore.wait()
         if let warmupError {
-            // Nothing the daemon can do fixes a model that is missing, torn or
-            // unloadable (it never downloads), so under launchd it exits 0 like
-            // the missing-grant case and KeepAlive stops instead of respawning
-            // every ten seconds. A person at a terminal still gets a failure.
-            FileHandle.standardError.write(Data("parrot stopped: \(warmupError)\n".utf8))
-            throw ExitCode(isatty(STDERR_FILENO) != 0 ? 1 : 0)
+            let line = "\(warmupError)".replacingOccurrences(of: "\n", with: " ")
+            FileHandle.standardError.write(Data("parrot stopped: \(line)\n".utf8))
+            // A store the daemon has itself proven missing or torn cannot be
+            // fixed by respawning (it never downloads), so under launchd that
+            // case exits 0 like the missing-grant case and KeepAlive leaves it
+            // stopped. Anything else may be a transient load failure at login
+            // and keeps the ten-second respawn.
+            if case TranscriberError.modelMissing = warmupError, getppid() == 1 {
+                throw ExitCode(0)
+            }
+            throw ExitCode(1)
         }
 
         let app = NSApplication.shared

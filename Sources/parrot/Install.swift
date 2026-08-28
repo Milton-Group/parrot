@@ -45,6 +45,10 @@ struct Install: ParsableCommand {
 
     private func writeAgent() throws {
         let binary = try resolveBinaryPath()
+        if let model = ModelRegistry.recommended(),
+           let missing = ModelStore.missingPiece(base: ModelStore.defaultBase(), model: model) {
+            print("warning: \(missing) is not on disk; the agent will stop at login until you run `parrot models download \(model.id)`")
+        }
 
         let plist: [String: Any] = [
             "Label": Self.label,

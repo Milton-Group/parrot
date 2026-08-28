@@ -21,9 +21,12 @@ enum ModelStore {
         base.appending(path: "models/argmaxinc/whisperkit-coreml/\(whisperKitID)", directoryHint: .isDirectory)
     }
 
-    /// The tokenizer WhisperKit pairs with a variant: models/<repo>/tokenizer.json.
-    static func tokenizerFile(base: URL, repo: String) -> URL {
-        base.appending(path: "models/\(repo)/tokenizer.json")
+    /// The tokenizer WhisperKit pairs with a variant lives at models/<repo>;
+    /// both files must be present or WhisperKit falls back to a Hub fetch.
+    static let tokenizerPieces = ["tokenizer.json", "tokenizer_config.json"]
+
+    static func tokenizerFolder(base: URL, repo: String) -> URL {
+        base.appending(path: "models/\(repo)", directoryHint: .isDirectory)
     }
 
     /// The first file a load would need that is not on disk, or nil when the
@@ -36,8 +39,11 @@ enum ModelStore {
             if !FileManager.default.fileExists(atPath: path) { return path }
         }
         if let repo = model.tokenizerRepo {
-            let path = tokenizerFile(base: base, repo: repo).path
-            if !FileManager.default.fileExists(atPath: path) { return path }
+            let folder = tokenizerFolder(base: base, repo: repo)
+            for piece in tokenizerPieces {
+                let path = folder.appending(path: piece).path
+                if !FileManager.default.fileExists(atPath: path) { return path }
+            }
         }
         return nil
     }
