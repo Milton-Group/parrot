@@ -36,7 +36,8 @@ parrot doctor                          # check permissions + fn key setting
 parrot models list                     # list available models
 parrot models download <id>            # pre-download a model
 parrot --model whisper-large-v3-turbo  # bigger, multilingual, slower first-run
-parrot --model-dir ~/models            # keep models elsewhere (default: ~/Library/Application Support/parrot)
+parrot models download <id> --model-dir ~/models  # keep models elsewhere (default: ~/Library/Application Support/parrot)
+parrot --model-dir ~/models            # ...and run from there; the daemon itself never downloads
 parrot --hotkey right-option           # change the push-to-talk key
 parrot --no-overlay                    # disable the bottom-of-screen pill
 ```

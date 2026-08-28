@@ -83,7 +83,7 @@ struct Run: ParsableCommand {
         }
 
         let transcriber = WhisperKitTranscriber(
-            model: chosenModel, downloadBase: try ModelStore.resolve(modelDir), download: false
+            model: chosenModel, downloadBase: try ModelStore.resolve(modelDir, create: false), download: false
         )
         let warmupSemaphore = DispatchSemaphore(value: 0)
         var warmupError: Error?
@@ -97,14 +97,12 @@ struct Run: ParsableCommand {
         }
         warmupSemaphore.wait()
         if let warmupError {
-            FileHandle.standardError.write(Data("warmup failed: \(warmupError)\n".utf8))
-            // A missing model is a state the daemon cannot fix (it never
-            // downloads), so exit 0 like the missing-grant case: launchd's
-            // KeepAlive stops instead of respawning every ten seconds.
-            if case TranscriberError.modelMissing = warmupError {
-                throw ExitCode(0)
-            }
-            throw ExitCode(1)
+            // Nothing the daemon can do fixes a model that is missing, torn or
+            // unloadable (it never downloads), so under launchd it exits 0 like
+            // the missing-grant case and KeepAlive stops instead of respawning
+            // every ten seconds. A person at a terminal still gets a failure.
+            FileHandle.standardError.write(Data("parrot stopped: \(warmupError)\n".utf8))
+            throw ExitCode(isatty(STDERR_FILENO) != 0 ? 1 : 0)
         }
 
         let app = NSApplication.shared
@@ -272,7 +270,7 @@ struct Models: ParsableCommand {
                 print("unknown model: \(id)")
                 throw ExitCode(1)
             }
-            let t = WhisperKitTranscriber(model: m, downloadBase: try ModelStore.resolve(modelDir), download: true)
+            let t = WhisperKitTranscriber(model: m, downloadBase: try ModelStore.resolve(modelDir, create: true), download: true)
 
             let sem = DispatchSemaphore(value: 0)
             var capturedError: Error?

@@ -12,6 +12,7 @@ enum ModelRegistry {
             displayName: "Whisper Base (English)",
             engine: .whisperKit,
             whisperKitID: "openai_whisper-base.en",
+            tokenizerRepo: "openai/whisper-base.en",
             sizeMB: 145,
             languages: ["en"],
             recommended: true
@@ -21,6 +22,7 @@ enum ModelRegistry {
             displayName: "Whisper Large v3 Turbo",
             engine: .whisperKit,
             whisperKitID: "openai_whisper-large-v3-v20240930_turbo",
+            tokenizerRepo: "openai/whisper-large-v3",
             sizeMB: 1620,
             languages: ["multi"],
             recommended: false
@@ -30,6 +32,7 @@ enum ModelRegistry {
             displayName: "Whisper Small (English)",
             engine: .whisperKit,
             whisperKitID: "openai_whisper-small.en",
+            tokenizerRepo: "openai/whisper-small.en",
             sizeMB: 488,
             languages: ["en"],
             recommended: false
