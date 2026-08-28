@@ -11,6 +11,12 @@ struct TranscriptionModel: Codable {
     let engine: Engine
     /// Engine-specific identifier (e.g. "openai_whisper-base.en" for WhisperKit).
     let whisperKitID: String?
+    /// Hugging Face repo WhisperKit fetches the tokenizer from; it lands under
+    /// `<store>/models/<repo>` beside the model, so the daemon can check for it
+    /// without a network round trip. Mirrors WhisperKit's internal
+    /// tokenizerNameForVariant table for the pinned WhisperKit version; a
+    /// WhisperKit bump must re-check these values.
+    let tokenizerRepo: String?
     let sizeMB: Int
     let languages: [String]
     let recommended: Bool

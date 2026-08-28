@@ -24,6 +24,24 @@ command line; on the fleet, the Milton bootstrap writes `--hotkey <value>` into 
 bootstrap time. The binary reads no environment variable of its own, so setting one in the running
 daemon's environment changes nothing.
 
+Downloaded models live under `~/Library/Application Support/parrot`: WhisperKit lays out the
+model at `models/argmaxinc/whisperkit-coreml/<variant>` and its tokenizer at
+`models/<tokenizer repo>` (for example `models/openai/whisper-large-v3`), so the whole `models/`
+tree is the store. Upstream leaves WhisperKit's default, `~/Documents/huggingface`, which macOS
+guards behind a Files & Folders prompt for whatever process touches it and iCloud may sync or
+evict. `--model-dir <path>` on `run` and `models download` overrides the location; there is no
+fallback to the old path, so a store downloaded by an older build has to be moved, which on the
+fleet the Milton bootstrap does once, `models/` as a whole. The daemon never downloads: before
+loading, `run` checks the four CoreML pieces and the tokenizer are on disk; a store it has proven
+missing or torn is reported on one line starting `parrot stopped:` and, under launchd, exits 0 so
+the KeepAlive agent stays stopped instead of respawning every ten seconds (1 at a terminal). Any
+other load failure exits 1 and respawns, since it may be transient. Only `models download`
+fetches, and a stopped agent does not notice a download or a moved store on its own: after
+either, `launchctl kickstart -k gui/$(id -u)/com.digimata.parrot`, which the Milton bootstrap does
+as part of its reload. The fleet
+LaunchAgent carries no `--model-dir`; the location is the binary's default, and the bootstrap
+writes no such flag.
+
 Injected text is trimmed of leading and trailing whitespace. Two dictations in a row therefore run
 together unless the first ends in punctuation, which is where the sentence spacing comes from.
 Unicode tag characters are dropped, so a subdivision flag — the Scottish, Welsh and English ones —

@@ -4,11 +4,18 @@ import WhisperKit
 actor WhisperKitTranscriber: Transcriber {
     let modelID: String
     private let model: TranscriptionModel
+    private let downloadBase: URL
+    private let download: Bool
     private var pipeline: WhisperKit?
 
-    init(model: TranscriptionModel) {
+    /// `download: false` is the daemon's setting: a missing model fails fast
+    /// with the expected path in the log instead of pulling 1.6GB headlessly
+    /// under launchd's KeepAlive. `models download` passes true.
+    init(model: TranscriptionModel, downloadBase: URL, download: Bool) {
         self.modelID = model.id
         self.model = model
+        self.downloadBase = downloadBase
+        self.download = download
     }
 
     /// Loads the model into memory; downloads first if not already on disk.
@@ -19,8 +26,18 @@ actor WhisperKitTranscriber: Transcriber {
         guard let whisperKitID = model.whisperKitID else {
             throw TranscriberError.missingEngineID
         }
-        FileHandle.standardError.write(Data("loading \(model.id)...\n".utf8))
-        let config = WhisperKitConfig(model: whisperKitID, verbose: false, prewarm: true, load: true)
+        let folder = ModelStore.variantFolder(base: downloadBase, whisperKitID: whisperKitID)
+        if !download, let missing = ModelStore.missingPiece(base: downloadBase, model: model) {
+            throw TranscriberError.modelMissing(missing)
+        }
+        FileHandle.standardError.write(Data("loading \(model.id) from \(downloadBase.path)...\n".utf8))
+        // With downloads off WhisperKit sets no model folder on its own and
+        // refuses to load, so the folder is named explicitly; with them on the
+        // folder must stay nil or the fetch is skipped.
+        let config = WhisperKitConfig(
+            model: whisperKitID, downloadBase: downloadBase, modelFolder: download ? nil : folder.path,
+            verbose: false, prewarm: true, load: true, download: download
+        )
         pipeline = try await WhisperKit(config)
         FileHandle.standardError.write(Data("✓ \(model.id) ready\n".utf8))
     }
@@ -53,7 +70,17 @@ actor WhisperKitTranscriber: Transcriber {
     }
 }
 
-enum TranscriberError: Error {
+enum TranscriberError: Error, CustomStringConvertible {
     case missingEngineID
     case notLoaded
+    case modelMissing(String)
+
+    var description: String {
+        switch self {
+        case .missingEngineID: return "model has no engine id"
+        case .notLoaded: return "model not loaded"
+        case .modelMissing(let path):
+            return "model not found at \(path) — run `parrot models download <id>`; the daemon never downloads"
+        }
+    }
 }

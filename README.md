@@ -6,7 +6,8 @@ A minimal macOS dictation daemon. Push-to-talk, on-device transcription, text in
 
 ```sh
 curl -fsSL https://digimata.github.io/parrot/install.sh | sh
-parrot setup                       # grants mic + accessibility, downloads the model
+parrot setup                       # grants mic + accessibility
+parrot models download whisper-base.en   # the daemon never downloads; fetch a model first
 parrot install --launch-at-login   # optional — runs in the background on login
 ```
 
@@ -29,13 +30,15 @@ That's it. There is no record button, no stop button, no "send" — `fn` is the 
 
 ```sh
 parrot                                 # run in the foreground (^C to quit)
-parrot setup                           # one-time setup: permissions + model download
+parrot setup                           # one-time setup: permissions
 parrot install --launch-at-login       # register a LaunchAgent (background daemon)
 parrot install --uninstall             # remove the LaunchAgent
 parrot doctor                          # check permissions + fn key setting
 parrot models list                     # list available models
 parrot models download <id>            # pre-download a model
-parrot --model whisper-large-v3-turbo  # bigger, multilingual, slower first-run
+parrot --model whisper-large-v3-turbo  # bigger, multilingual; download it first
+parrot models download <id> --model-dir ~/models  # keep models elsewhere (default: ~/Library/Application Support/parrot)
+parrot --model-dir ~/models            # ...and run from there; restart the daemon after any download
 parrot --hotkey right-option           # change the push-to-talk key
 parrot --no-overlay                    # disable the bottom-of-screen pill
 ```

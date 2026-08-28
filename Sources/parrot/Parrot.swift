@@ -40,6 +40,12 @@ struct Run: ParsableCommand {
     )
     var hotkey: String?
 
+    @Option(
+        name: .long,
+        help: "Directory that holds downloaded models. Defaults to ~/Library/Application Support/parrot."
+    )
+    var modelDir: String?
+
     func run() throws {
         if !skipDoctor {
             let checks = DoctorReport.run()
@@ -76,7 +82,9 @@ struct Run: ParsableCommand {
             exitAwaitingAccessibilityGrant()
         }
 
-        let transcriber = WhisperKitTranscriber(model: chosenModel)
+        let transcriber = WhisperKitTranscriber(
+            model: chosenModel, downloadBase: try ModelStore.resolve(modelDir, create: false), download: false
+        )
         let warmupSemaphore = DispatchSemaphore(value: 0)
         var warmupError: Error?
         Task.detached {
@@ -89,7 +97,16 @@ struct Run: ParsableCommand {
         }
         warmupSemaphore.wait()
         if let warmupError {
-            FileHandle.standardError.write(Data("warmup failed: \(warmupError)\n".utf8))
+            let line = "\(warmupError)".replacingOccurrences(of: "\n", with: " ")
+            FileHandle.standardError.write(Data("parrot stopped: \(line)\n".utf8))
+            // A store the daemon has itself proven missing or torn cannot be
+            // fixed by respawning (it never downloads), so under launchd that
+            // case exits 0 like the missing-grant case and KeepAlive leaves it
+            // stopped. Anything else may be a transient load failure at login
+            // and keeps the ten-second respawn.
+            if case TranscriberError.modelMissing = warmupError, getppid() == 1 {
+                throw ExitCode(0)
+            }
             throw ExitCode(1)
         }
 
@@ -247,12 +264,18 @@ struct Models: ParsableCommand {
     struct Download: ParsableCommand {
         @Argument(help: "Model id to download.") var id: String
 
+        @Option(
+            name: .long,
+            help: "Directory that holds downloaded models. Defaults to ~/Library/Application Support/parrot."
+        )
+        var modelDir: String?
+
         func run() throws {
             guard let m = ModelRegistry.find(id) else {
                 print("unknown model: \(id)")
                 throw ExitCode(1)
             }
-            let t = WhisperKitTranscriber(model: m)
+            let t = WhisperKitTranscriber(model: m, downloadBase: try ModelStore.resolve(modelDir, create: true), download: true)
 
             let sem = DispatchSemaphore(value: 0)
             var capturedError: Error?
