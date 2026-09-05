@@ -42,6 +42,15 @@ as part of its reload. The fleet
 LaunchAgent carries no `--model-dir`; the location is the binary's default, and the bootstrap
 writes no such flag.
 
+Before either daemon startup or an explicit model download constructs WhisperKit, the binary
+removes `HF_ENDPOINT`, `HF_TOKEN`, `HUGGING_FACE_HUB_TOKEN`, `HF_TOKEN_PATH`, and `HF_HOME` from
+its environment. This prevents plist-provided environment values from redirecting Hub requests
+or selecting token files. WhisperKit's fixed-default Hugging Face token lookup remains dependency
+behaviour, and the user-writable model store remains an accepted existing boundary.
+
+The `--dump-wav` capture diagnostic and its fixed temporary path exist only in debug builds.
+Release help and argument parsing do not expose the option.
+
 Injected text is trimmed of leading and trailing whitespace. Two dictations in a row therefore run
 together unless the first ends in punctuation, which is where the sentence spacing comes from.
 Unicode tag characters are dropped, so a subdivision flag — the Scottish, Welsh and English ones —
@@ -69,7 +78,8 @@ policy only; required reviewers on a private-repo environment need GitHub Enterp
 organisation does not have, so there is no approval pause and none is claimed. The job builds `parrot-macos-arm64.tar.gz`,
 mints an `actions/attest-build-provenance` attestation, verifies that attestation against this
 repo, this workflow and the tag before publishing, and attaches the tarball, its `.sha256`
-sidecar and the Sigstore bundle to the release.
+sidecar and the Sigstore bundle to the release. Packaging suppresses macOS extended-attribute
+sidecars and rejects an archive containing anything other than the single `parrot` entry.
 
 The binary is unsigned. The trust story is the per-user TCC grants plus the digest pin in
 Milton-Group/infra. See `docs/onboarding-guide/mac-setup/README.md` there for the bump and
