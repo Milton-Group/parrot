@@ -34,7 +34,7 @@ jobs:
           BIN=.build/arm64-apple-macosx/release/parrot
           file "$BIN"
           mkdir -p dist
-          cp "$BIN" dist/parrot
+          COPYFILE_DISABLE=1 cp -X "$BIN" dist/parrot
 
       - name: strip
         run: strip -x dist/parrot
@@ -42,7 +42,14 @@ jobs:
       - name: package
         run: |
           cd dist
+          export COPYFILE_DISABLE=1
           tar -czf parrot-macos-arm64.tar.gz parrot
+          entries=$(tar -tzf parrot-macos-arm64.tar.gz)
+          if [ "$entries" != "parrot" ]; then
+            echo "unexpected archive entries:" >&2
+            printf '%s\n' "$entries" >&2
+            exit 1
+          fi
           shasum -a 256 parrot-macos-arm64.tar.gz > parrot-macos-arm64.tar.gz.sha256
           ls -lh
 

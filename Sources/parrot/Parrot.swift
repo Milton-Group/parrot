@@ -25,8 +25,10 @@ struct Run: ParsableCommand {
     @Flag(name: .long, help: "Print every keyboard event the tap sees (debug).")
     var debugHotkey: Bool = false
 
-    @Flag(name: .long, help: "Write each capture to /tmp/parrot-last.wav for inspection.")
-    var dumpWav: Bool = false
+    #if DEBUG
+        @Flag(name: .long, help: "Write each capture to /tmp/parrot-last.wav for inspection.")
+        var dumpWav: Bool = false
+    #endif
 
     @Flag(name: .long, help: "Disable the on-screen recording overlay.")
     var noOverlay: Bool = false
@@ -47,6 +49,8 @@ struct Run: ParsableCommand {
     var modelDir: String?
 
     func run() throws {
+        HubEnvironment.sanitize()
+
         if !skipDoctor {
             let checks = DoctorReport.run()
             if !DoctorReport.allOK(checks) {
@@ -116,7 +120,9 @@ struct Run: ParsableCommand {
         let specs = hotkey.map(HotkeySpec.parse) ?? HotkeySpec.defaults
         let monitor = HotkeyMonitor(specs: specs, debug: debugHotkey)
         let capture = AudioCapture()
-        let dumpWav = self.dumpWav
+        #if DEBUG
+            let dumpWav = self.dumpWav
+        #endif
         let overlay: RecordingOverlay? = noOverlay ? nil : MainActor.assumeIsolated { RecordingOverlay() }
         if let overlay {
             capture.onLevel = { level in overlay.pushLevel(level) }
@@ -157,15 +163,17 @@ struct Run: ParsableCommand {
                     FileHandle.standardError.write(Data(
                         String(format: "○ captured %.2fs · rms %.3f\n", seconds, rms).utf8
                     ))
-                    if dumpWav, !samples.isEmpty {
-                        let path = "/tmp/parrot-last.wav"
-                        do {
-                            try WAVWriter.write(samples: samples, sampleRate: 16_000, to: path)
-                            FileHandle.standardError.write(Data("  wrote \(path)\n".utf8))
-                        } catch {
-                            FileHandle.standardError.write(Data("  wav write failed: \(error)\n".utf8))
+                    #if DEBUG
+                        if dumpWav, !samples.isEmpty {
+                            let path = "/tmp/parrot-last.wav"
+                            do {
+                                try WAVWriter.write(samples: samples, sampleRate: 16_000, to: path)
+                                FileHandle.standardError.write(Data("  wrote \(path)\n".utf8))
+                            } catch {
+                                FileHandle.standardError.write(Data("  wav write failed: \(error)\n".utf8))
+                            }
                         }
-                    }
+                    #endif
                     guard !samples.isEmpty else {
                         MainActor.assumeIsolated {
                             overlay?.hide()
@@ -271,6 +279,8 @@ struct Models: ParsableCommand {
         var modelDir: String?
 
         func run() throws {
+            HubEnvironment.sanitize()
+
             guard let m = ModelRegistry.find(id) else {
                 print("unknown model: \(id)")
                 throw ExitCode(1)
