@@ -17,16 +17,24 @@ enum ModelStore {
     }
 
     /// WhisperKit's layout beneath the base: models/argmaxinc/whisperkit-coreml/<variant>.
+    static func variantPath(whisperKitID: String) -> String {
+        "models/argmaxinc/whisperkit-coreml/\(whisperKitID)"
+    }
+
     static func variantFolder(base: URL, whisperKitID: String) -> URL {
-        base.appending(path: "models/argmaxinc/whisperkit-coreml/\(whisperKitID)", directoryHint: .isDirectory)
+        base.appending(path: variantPath(whisperKitID: whisperKitID), directoryHint: .isDirectory)
     }
 
     /// The tokenizer WhisperKit pairs with a variant lives at models/<repo>;
     /// both files must be present or WhisperKit falls back to a Hub fetch.
     static let tokenizerPieces = ["tokenizer.json", "tokenizer_config.json"]
 
+    static func tokenizerPath(repo: String) -> String {
+        "models/\(repo)"
+    }
+
     static func tokenizerFolder(base: URL, repo: String) -> URL {
-        base.appending(path: "models/\(repo)", directoryHint: .isDirectory)
+        base.appending(path: tokenizerPath(repo: repo), directoryHint: .isDirectory)
     }
 
     /// The first file a load would need that is not on disk, or nil when the

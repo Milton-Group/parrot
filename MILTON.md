@@ -71,6 +71,17 @@ mints an `actions/attest-build-provenance` attestation, verifies that attestatio
 repo, this workflow and the tag before publishing, and attaches the tarball, its `.sha256`
 sidecar and the Sigstore bundle to the release.
 
+Beside the tarball the release ships `parrot-model-spec.json`: the model store layout this
+build expects, printed by the stripped release binary itself with `parrot models spec`. It
+names the default store, and for each registered model its WhisperKit id, the variant and
+tokenizer paths relative to the store, and the files `run` checks before loading. They come from
+the same `ModelRegistry` and `ModelStore` code that check uses, so the file cannot drift from
+the binary and is never edited by hand. The one attestation covers both the tarball and the spec,
+so the vendored Sigstore bundle verifies either (`gh attestation verify parrot-model-spec.json
+--bundle parrot-macos-arm64.tar.gz.sigstore.json ...`). Milton-Group/infra binds its hosted model
+pins to this file, so a Parrot bump that changes the model cannot ship with a stale model.
+`schema` goes up only when a field changes meaning or is removed.
+
 The binary is unsigned. The trust story is the per-user TCC grants plus the digest pin in
 Milton-Group/infra. See `docs/onboarding-guide/mac-setup/README.md` there for the bump and
 verification procedure.
