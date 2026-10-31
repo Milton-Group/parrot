@@ -245,7 +245,7 @@ struct Doctor: ParsableCommand {
 struct Models: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Manage transcription models.",
-        subcommands: [List.self, Download.self]
+        subcommands: [List.self, Download.self, Spec.self]
     )
 
     struct List: ParsableCommand {
@@ -258,6 +258,16 @@ struct Models: ParsableCommand {
                 let size = String(format: "%5d MB", m.sizeMB)
                 print("\(star) \(id) \(size)  \(langs)  \(m.displayName)")
             }
+        }
+    }
+
+    struct Spec: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Print, as JSON, the model store layout this build expects."
+        )
+
+        func run() throws {
+            FileHandle.standardOutput.write(try ModelSpec.current().json())
         }
     }
 

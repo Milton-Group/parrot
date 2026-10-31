@@ -39,6 +39,25 @@ jobs:
       - name: strip
         run: strip -x dist/parrot
 
+      # Run on the stripped binary that ships, so the spec describes exactly
+      # that build. Consumers bind their model pins to this file; it is never
+      # written by hand.
+      - name: model spec
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          ./parrot models spec > parrot-model-spec.json
+          jq -e '.schema == 1
+            and (.store.default_path | startswith("~/"))
+            and ((.models | length) > 0)
+            and (.default_model as $d | any(.models[]; .id == $d))
+            and all(.models[];
+              (.whisper_kit_id | length) > 0
+              and (.variant_pieces | length) > 0
+              and all(.variant_path, (.tokenizer_path // empty);
+                startswith("models/") and (test("(^|/)\\.\\.(/|$)") | not)))' parrot-model-spec.json
+          cat parrot-model-spec.json
+
       - name: package
         run: |
           cd dist
@@ -49,7 +68,11 @@ jobs:
       - name: attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/parrot-macos-arm64.tar.gz
+          # One attestation, both subjects: the bundle downloaded below for the
+          # tarball also verifies the spec.
+          subject-path: |
+            dist/parrot-macos-arm64.tar.gz
+            dist/parrot-model-spec.json
 
       - name: verify the attestation we just minted
         working-directory: dist
@@ -63,6 +86,9 @@ jobs:
             echo "gh $have is older than $need, which lacks a usable 'gh attestation verify'" >&2
             exit 1
           fi
+          # The spec is checked against the downloaded bundle below instead: its
+          # digest repeats across releases that share a registry, so an online
+          # lookup by digest would sift every one of them.
           gh attestation verify parrot-macos-arm64.tar.gz \
             --repo Milton-Group/parrot \
             --signer-workflow Milton-Group/parrot/.github/workflows/release.yml \
@@ -86,6 +112,13 @@ jobs:
             exit 1
           fi
           mv "${bundles[0]}" parrot-macos-arm64.tar.gz.sigstore.json
+          # The spec must verify offline against the same bundle, or a consumer
+          # vendoring only that bundle could not check it.
+          gh attestation verify parrot-model-spec.json \
+            --bundle parrot-macos-arm64.tar.gz.sigstore.json \
+            --repo Milton-Group/parrot \
+            --signer-workflow Milton-Group/parrot/.github/workflows/release.yml \
+            --source-ref "refs/tags/${GITHUB_REF_NAME}"
           ls -lh
 
       - name: release notes
@@ -93,12 +126,16 @@ jobs:
         run: |
           set -euo pipefail
           digest=$(shasum -a 256 parrot-macos-arm64.tar.gz | awk '{print $1}')
+          spec_digest=$(shasum -a 256 parrot-model-spec.json | awk '{print $1}')
           cat > notes.md <<EOF
           Milton fork build of parrot, arm64 macOS, built and attested by
           \`.github/workflows/release.yml\` from tag \`${GITHUB_REF_NAME}\`
           (commit \`${GITHUB_SHA}\`).
 
           \`parrot-macos-arm64.tar.gz\` sha256: \`${digest}\`
+
+          \`parrot-model-spec.json\` sha256: \`${spec_digest}\` (the model store
+          layout this build expects; the same attestation covers it)
 
           Verify before pinning:
 
@@ -109,6 +146,11 @@ jobs:
             --signer-workflow Milton-Group/parrot/.github/workflows/release.yml \\
             --source-ref refs/tags/${GITHUB_REF_NAME}
           \`\`\`
+
+          Verify \`parrot-model-spec.json\` with the same command and the same
+          bundle (the file name in place of the tarball's). Its bytes repeat across
+          releases with an unchanged model registry, so only that bundle and this
+          tag tie it to this tarball.
 
           Unsigned binary: the per-user TCC grants and the digest pin in
           Milton-Group/infra are the trust story. See MILTON.md.
@@ -125,5 +167,6 @@ jobs:
             parrot-macos-arm64.tar.gz \
             parrot-macos-arm64.tar.gz.sha256 \
             parrot-macos-arm64.tar.gz.sigstore.json \
+            parrot-model-spec.json \
             --verify-tag \
             --notes-file notes.md
