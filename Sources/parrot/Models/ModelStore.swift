@@ -16,9 +16,12 @@ enum ModelStore {
         URL.applicationSupportDirectory.appending(path: "parrot", directoryHint: .isDirectory)
     }
 
+    /// The directory under the base that holds every model; the whole tree is the store.
+    static let root = "models"
+
     /// WhisperKit's layout beneath the base: models/argmaxinc/whisperkit-coreml/<variant>.
     static func variantPath(whisperKitID: String) -> String {
-        "models/argmaxinc/whisperkit-coreml/\(whisperKitID)"
+        "\(root)/argmaxinc/whisperkit-coreml/\(whisperKitID)"
     }
 
     static func variantFolder(base: URL, whisperKitID: String) -> URL {
@@ -30,7 +33,7 @@ enum ModelStore {
     static let tokenizerPieces = ["tokenizer.json", "tokenizer_config.json"]
 
     static func tokenizerPath(repo: String) -> String {
-        "models/\(repo)"
+        "\(root)/\(repo)"
     }
 
     static func tokenizerFolder(base: URL, repo: String) -> URL {

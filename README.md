@@ -36,9 +36,9 @@ parrot install --uninstall             # remove the LaunchAgent
 parrot doctor                          # check permissions + fn key setting
 parrot models list                     # list available models
 parrot models download <id>            # pre-download a model
+parrot models spec                     # print the model store layout this build expects (JSON)
 parrot --model whisper-large-v3-turbo  # bigger, multilingual; download it first
 parrot models download <id> --model-dir ~/models  # keep models elsewhere (default: ~/Library/Application Support/parrot)
-parrot models spec                     # print the model store layout this build expects (JSON)
 parrot --model-dir ~/models            # ...and run from there; restart the daemon after any download
 parrot --hotkey right-option           # change the push-to-talk key
 parrot --no-overlay                    # disable the bottom-of-screen pill

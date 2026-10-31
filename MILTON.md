@@ -77,10 +77,30 @@ names the default store, and for each registered model its WhisperKit id, the va
 tokenizer paths relative to the store, and the files `run` checks before loading. They come from
 the same `ModelRegistry` and `ModelStore` code that check uses, so the file cannot drift from
 the binary and is never edited by hand. The one attestation covers both the tarball and the spec,
-so the vendored Sigstore bundle verifies either (`gh attestation verify parrot-model-spec.json
---bundle parrot-macos-arm64.tar.gz.sigstore.json ...`). Milton-Group/infra binds its hosted model
-pins to this file, so a Parrot bump that changes the model cannot ship with a stale model.
-`schema` goes up only when a field changes meaning or is removed.
+so the vendored Sigstore bundle verifies either. Verify the spec against **that same bundle and
+tag**, never on its own:
+
+```
+gh attestation verify parrot-model-spec.json \
+  --bundle parrot-macos-arm64.tar.gz.sigstore.json \
+  --repo Milton-Group/parrot \
+  --signer-workflow Milton-Group/parrot/.github/workflows/release.yml \
+  --source-ref refs/tags/<tag>
+```
+
+A release that leaves the model registry alone produces a byte-identical spec, so the same digest
+carries attestations from many tags. A check that only asks "was this file attested by this repo"
+would accept an old release's spec next to a new tarball; the shared bundle is what ties the two
+together. There is no `.sha256` sidecar for the spec: the bundle is its verification path.
+
+Keys are spelled out in `ModelSpec`'s `CodingKeys`, not derived from Swift names: `schema`,
+`default_model`, `store.default_path`, `store.root`, and per entry of `models`: `id`,
+`whisper_kit_id`, `variant_path`, `variant_pieces`, `tokenizer_repo`, `tokenizer_path`,
+`tokenizer_pieces`. Paths are relative to the store. A model with no tokenizer omits
+`tokenizer_repo` and `tokenizer_path` and has an empty `tokenizer_pieces`. Treat the paths as data:
+reject an absolute path or a `..` before joining one to a store. Milton-Group/infra binds its
+hosted model pins to this file, so a Parrot bump that changes the model cannot ship with a stale
+model. `schema` goes up only when a field changes meaning or is removed.
 
 The binary is unsigned. The trust story is the per-user TCC grants plus the digest pin in
 Milton-Group/infra. See `docs/onboarding-guide/mac-setup/README.md` there for the bump and

@@ -11,6 +11,11 @@ struct ModelSpec: Encodable {
         /// The default store with the home directory written as `~`.
         let defaultPath: String
         let root: String
+
+        enum CodingKeys: String, CodingKey {
+            case defaultPath = "default_path"
+            case root
+        }
     }
 
     struct Model: Encodable {
@@ -21,6 +26,19 @@ struct ModelSpec: Encodable {
         let tokenizerRepo: String?
         let tokenizerPath: String?
         let tokenizerPieces: [String]
+
+        // Spelled out, not derived from the property names: these keys are the
+        // contract a consumer binds to, and a Swift rename must not move them.
+        // A model without a tokenizer omits tokenizer_repo and tokenizer_path.
+        enum CodingKeys: String, CodingKey {
+            case id
+            case whisperKitID = "whisper_kit_id"
+            case variantPath = "variant_path"
+            case variantPieces = "variant_pieces"
+            case tokenizerRepo = "tokenizer_repo"
+            case tokenizerPath = "tokenizer_path"
+            case tokenizerPieces = "tokenizer_pieces"
+        }
     }
 
     /// Bumped when a field changes meaning or goes away; adding one does not.
@@ -29,13 +47,19 @@ struct ModelSpec: Encodable {
     let defaultModel: String?
     let models: [Model]
 
+    enum CodingKeys: String, CodingKey {
+        case schema, store, models
+        case defaultModel = "default_model"
+    }
+
     static func current() -> ModelSpec {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         var path = ModelStore.defaultBase().path
         if path.hasPrefix(home + "/") { path = "~" + path.dropFirst(home.count) }
         return ModelSpec(
-            store: Store(defaultPath: path, root: "models"),
+            store: Store(defaultPath: path, root: ModelStore.root),
             defaultModel: ModelRegistry.recommended()?.id,
+            // Only WhisperKit models have a store layout to describe.
             models: ModelRegistry.shared.compactMap { m in
                 guard let id = m.whisperKitID else { return nil }
                 return Model(
@@ -53,7 +77,6 @@ struct ModelSpec: Encodable {
 
     func json() throws -> Data {
         let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         return try encoder.encode(self) + Data("\n".utf8)
     }

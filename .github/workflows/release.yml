@@ -49,9 +49,13 @@ jobs:
           ./parrot models spec > parrot-model-spec.json
           jq -e '.schema == 1
             and (.store.default_path | startswith("~/"))
-            and (.models | length > 0)
-            and all(.models[]; (.variant_path | startswith("models/"))
-              and (.variant_pieces | length > 0))' parrot-model-spec.json
+            and ((.models | length) > 0)
+            and (.default_model as $d | any(.models[]; .id == $d))
+            and all(.models[];
+              (.whisper_kit_id | length) > 0
+              and (.variant_pieces | length) > 0
+              and all(.variant_path, (.tokenizer_path // empty);
+                startswith("models/") and (test("(^|/)\\.\\.(/|$)") | not)))' parrot-model-spec.json
           cat parrot-model-spec.json
 
       - name: package
@@ -82,12 +86,13 @@ jobs:
             echo "gh $have is older than $need, which lacks a usable 'gh attestation verify'" >&2
             exit 1
           fi
-          for f in parrot-macos-arm64.tar.gz parrot-model-spec.json; do
-            gh attestation verify "$f" \
-              --repo Milton-Group/parrot \
-              --signer-workflow Milton-Group/parrot/.github/workflows/release.yml \
-              --source-ref "refs/tags/${GITHUB_REF_NAME}"
-          done
+          # The spec is checked against the downloaded bundle below instead: its
+          # digest repeats across releases that share a registry, so an online
+          # lookup by digest would sift every one of them.
+          gh attestation verify parrot-macos-arm64.tar.gz \
+            --repo Milton-Group/parrot \
+            --signer-workflow Milton-Group/parrot/.github/workflows/release.yml \
+            --source-ref "refs/tags/${GITHUB_REF_NAME}"
 
       - name: download the attestation bundle for vendoring
         working-directory: dist
@@ -142,8 +147,10 @@ jobs:
             --source-ref refs/tags/${GITHUB_REF_NAME}
           \`\`\`
 
-          The same command with \`parrot-model-spec.json\` in place of the
-          tarball verifies the spec.
+          Verify \`parrot-model-spec.json\` with the same command and the same
+          bundle (the file name in place of the tarball's). Its bytes repeat across
+          releases with an unchanged model registry, so only that bundle and this
+          tag tie it to this tarball.
 
           Unsigned binary: the per-user TCC grants and the digest pin in
           Milton-Group/infra are the trust story. See MILTON.md.
